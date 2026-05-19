@@ -1,0 +1,142 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isGroupMember(groupId, uid) {
+      return exists(/databases/$(database)/documents/groups/$(groupId)/members/$(uid)) || 
+             get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == uid;
+    }
+
+    function isValidUser(data) {
+      return data.size() == 2 &&
+             data.keys().hasAll(['displayName', 'createdAt']) &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 100 &&
+             data.createdAt == request.time;
+    }
+    
+    function isValidUserUpdate(data) {
+      return data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 100;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.id == request.auth.uid; // Dummy list constraint
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUser(incoming());
+      allow update: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUserUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName']);
+    }
+
+    function isValidGroup(data) {
+      return data.keys().hasAll(['name', 'ownerId', 'createdAt', 'inviteCode']) &&
+             data.size() == 4 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.ownerId is string && data.ownerId.size() <= 128 &&
+             data.createdAt == request.time &&
+             data.inviteCode is string && data.inviteCode.size() > 0 && data.inviteCode.size() <= 20;
+    }
+    
+    function isValidGroupUpdate(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.ownerId is string && data.ownerId.size() <= 128 &&
+             data.inviteCode is string && data.inviteCode.size() > 0 && data.inviteCode.size() <= 20;
+    }
+
+    match /groups/{groupId} {
+      allow get: if isSignedIn() && isValidId(groupId);
+      allow list: if isSignedIn() && (
+        resource.data.ownerId == request.auth.uid || 
+        isGroupMember(resource.id, request.auth.uid)
+      );
+      allow create: if isSignedIn() && isValidId(groupId) && isValidGroup(incoming()) && incoming().ownerId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(groupId) && isValidGroupUpdate(incoming()) && incoming().ownerId == existing().ownerId && existing().ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'inviteCode']);
+      allow delete: if isSignedIn() && isValidId(groupId) && existing().ownerId == request.auth.uid;
+      
+      function isValidGroupMember(data) {
+        return data.keys().hasAll(['role', 'joinedAt']) &&
+               data.size() == 2 &&
+               data.role is string && (data.role == 'owner' || data.role == 'member') &&
+               data.joinedAt == request.time;
+      }
+      
+      match /members/{memberId} {
+        allow get: if isSignedIn() && isValidId(groupId) && isValidId(memberId) && isGroupMember(groupId, request.auth.uid);
+        allow list: if isSignedIn() && isValidId(groupId) && isGroupMember(groupId, request.auth.uid);
+        allow create: if isSignedIn() && isValidId(groupId) && isValidId(memberId) && memberId == request.auth.uid && isValidGroupMember(incoming()) && (
+          (incoming().role == 'owner' && get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid) ||
+          (incoming().role == 'member')
+        );
+        allow delete: if isSignedIn() && isValidId(groupId) && isValidId(memberId) && (existing().role != 'owner' || get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId != request.auth.uid) && memberId == request.auth.uid; 
+      }
+
+      function isValidMarker(data) {
+        return data.keys().hasAll(['name', 'category', 'emoji', 'description', 'lat', 'lng', 'externalLink', 'imageUrl', 'rating', 'ownerId', 'createdAt']) &&
+               data.size() >= 11 &&
+               data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+               data.category is string &&
+               data.emoji is string && data.emoji.size() <= 32 &&
+               data.description is string && data.description.size() <= 2000 &&
+               data.lat is number && data.lng is number &&
+               data.externalLink is string && data.externalLink.size() <= 1000 &&
+               data.imageUrl is string && data.imageUrl.size() <= 1000 &&
+               data.rating is number && data.rating >= 0 && data.rating <= 5 &&
+               data.ownerId is string && data.ownerId == request.auth.uid &&
+               data.createdAt == request.time;
+      }
+      
+      function isValidMarkerUpdate(data) {
+        return data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+               data.category is string &&
+               data.emoji is string && data.emoji.size() <= 32 &&
+               data.description is string && data.description.size() <= 2000 &&
+               data.lat is number && data.lng is number &&
+               data.externalLink is string && data.externalLink.size() <= 1000 &&
+               data.imageUrl is string && data.imageUrl.size() <= 1000 &&
+               data.rating is number && data.rating >= 0 && data.rating <= 5;
+      }
+
+      match /markers/{markerId} {
+        allow get: if isSignedIn() && isValidId(groupId) && isGroupMember(groupId, request.auth.uid);
+        allow list: if isSignedIn() && isValidId(groupId) && isGroupMember(groupId, request.auth.uid);
+        allow create: if isSignedIn() && isValidId(groupId) && isGroupMember(groupId, request.auth.uid) && isValidMarker(incoming());
+        allow update: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isGroupMember(groupId, request.auth.uid) && isValidMarkerUpdate(incoming()) && existing().ownerId == request.auth.uid && incoming().ownerId == existing().ownerId && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'emoji', 'description', 'lat', 'lng', 'externalLink', 'imageUrl', 'rating']);
+        allow delete: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isGroupMember(groupId, request.auth.uid) && existing().ownerId == request.auth.uid;
+
+        function isValidReview(data) {
+          return data.keys().hasAll(['text', 'rating', 'ownerId', 'createdAt']) &&
+                 data.size() == 4 &&
+                 data.text is string && data.text.size() <= 2000 &&
+                 data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+                 data.ownerId is string && data.ownerId.size() <= 128 &&
+                 data.createdAt == request.time;
+        }
+        
+        function isValidReviewUpdate(data) {
+          return data.text is string && data.text.size() <= 2000 &&
+                 data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+                 data.ownerId is string && data.ownerId.size() <= 128;
+        }
+
+        match /reviews/{reviewId} {
+          allow get: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isValidId(reviewId) && isGroupMember(groupId, request.auth.uid);
+          allow list: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isGroupMember(groupId, request.auth.uid);
+          allow create: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isValidId(reviewId) && isGroupMember(groupId, request.auth.uid) && isValidReview(incoming()) && incoming().ownerId == request.auth.uid && exists(/databases/$(database)/documents/groups/$(groupId)/markers/$(markerId));
+          allow update: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isValidId(reviewId) && isGroupMember(groupId, request.auth.uid) && isValidReviewUpdate(incoming()) && existing().ownerId == request.auth.uid && incoming().ownerId == existing().ownerId && incoming().diff(existing()).affectedKeys().hasOnly(['text', 'rating']);
+          allow delete: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isValidId(reviewId) && isGroupMember(groupId, request.auth.uid) && existing().ownerId == request.auth.uid;
+        }
+      }
+    }
+  }
+}

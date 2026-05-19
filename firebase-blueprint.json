@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Public profile for users.",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "createdAt": { "type": "number", "description": "Timestamp" }
+      },
+      "required": ["displayName", "createdAt"]
+    },
+    "Group": {
+      "title": "Group",
+      "description": "A group of users sharing a map.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "inviteCode": { "type": "string" }
+      },
+      "required": ["name", "ownerId", "createdAt", "inviteCode"]
+    },
+    "GroupMember": {
+      "title": "Group Member",
+      "description": "Membership document within a group.",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["owner", "member"] },
+        "joinedAt": { "type": "number" }
+      },
+      "required": ["role", "joinedAt"]
+    },
+    "Marker": {
+      "title": "Map Marker",
+      "description": "A recommended place or item on the map.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string", "enum": ["restaurant", "shopping", "attraction", "pet", "parking", "cafe", "nature", "stay", "other"] },
+        "emoji": { "type": "string" },
+        "description": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "externalLink": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "rating": { "type": "number" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["name", "category", "lat", "lng", "ownerId", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "A review for a marker.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "rating": { "type": "number" },
+        "ownerId": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["rating", "ownerId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles."
+    },
+    "groups/{groupId}": {
+      "schema": { "$ref": "#/entities/Group" },
+      "description": "Groups for shared maps."
+    },
+    "groups/{groupId}/members/{userId}": {
+      "schema": { "$ref": "#/entities/GroupMember" },
+      "description": "Members of a specific group."
+    },
+    "groups/{groupId}/markers/{markerId}": {
+      "schema": { "$ref": "#/entities/Marker" },
+      "description": "Markers (places/items) added to a group map."
+    },
+    "groups/{groupId}/markers/{markerId}/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/Review" },
+      "description": "Reviews on markers."
+    }
+  }
+}

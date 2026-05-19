@@ -1,0 +1,1609 @@
+import React, { useEffect, useState, FormEvent, useRef } from 'react';
+import { auth, db, storage } from './firebase';
+import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { 
+  doc, 
+  getDocFromServer, 
+  setDoc, 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  getDocs,
+  deleteDoc,
+  serverTimestamp
+} from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { useAuthState } from 'react-firebase-hooks/auth';
+import { handleFirestoreError, OperationType } from './utils/errorHandling';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  LogOut, 
+  Plus, 
+  Search, 
+  MapPin, 
+  Utensils, 
+  ShoppingBag, 
+  Camera, 
+  Dog, 
+  Car, 
+  Star,
+  Users,
+  ChevronRight,
+  ExternalLink,
+  Trash2,
+  X,
+  Pencil,
+  Coffee,
+  Trees,
+  Hotel,
+  GlassWater,
+  PawPrint,
+  Sofa,
+  Stethoscope,
+  Landmark,
+  LocateFixed,
+  Menu,
+  Moon,
+  Sun,
+  Compass
+} from 'lucide-react';
+import { Group, Marker as LociMarker, Review } from './types';
+import { APIProvider, Map, AdvancedMarker as MapboxMarker, Pin, useMap, useMapsLibrary, ControlPosition } from '@vis.gl/react-google-maps';
+import PlaceAutocomplete from './components/PlaceAutocomplete';
+import ClusteredMarkers from './components/ClusteredMarkers';
+
+const GOOGLE_MAPS_PLATFORM_KEY = (
+  process.env.GOOGLE_MAPS_PLATFORM_KEY ||
+  (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
+  (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
+  ''
+).trim();
+const hasValidKey = Boolean(GOOGLE_MAPS_PLATFORM_KEY) && GOOGLE_MAPS_PLATFORM_KEY !== 'YOUR_API_KEY';
+
+function MapController({ center }: { center: [number, number] | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (center && map) {
+      map.panTo({ lat: center[0], lng: center[1] });
+      map.setZoom(16);
+    }
+  }, [center, map]);
+  return null;
+}
+
+const getCategoryColor = (cat: string) => {
+  if (!cat) return { main: '#000000', dark: '#000000' };
+  switch(cat.toLowerCase()) {
+    case 'restaurant': return { main: '#F4511E', dark: '#BF360C' }; // Orange
+    case 'shopping': return { main: '#039BE5', dark: '#01579B' };   // Blue
+    case 'doctor': return { main: '#00ACC1', dark: '#006064' };     // Teal
+    case 'pet friendly': return { main: '#7CB342', dark: '#33691E' }; // Green
+    case 'cafe': return { main: '#BCAAA4', dark: '#795548' };       // Tan
+    case 'bar': return { main: '#8E24AA', dark: '#4A148C' };        // Purple
+    case 'hotel': return { main: '#546E7A', dark: '#263238' };      // Grey
+    case 'sightseeing': return { main: '#4FC3F7', dark: '#0288D1' }; // Sky Blue
+    case 'home product': return { main: '#FFB300', dark: '#FF8F00' }; // Amber
+    default: return { main: '#000000', dark: '#000000' };
+  }
+};
+
+const getCategorySvgIcon = (cat: string, color: string) => {
+  const c = color;
+  switch(cat.toLowerCase()) {
+    case 'restaurant':
+      return `
+        <path d="M11 9H9V2h2v7zm4-7v7h-2V2h2zm-8 7V2h2v7H7zm10 0V2h2v7h-2z" fill="${c}"/>
+        <path d="M6 10v3c0 2.21 1.79 4 4 4h4c2.21 0 4-1.79 4-4v-3H6zm7 10h-2v-3h2v3z" fill="${c}"/>
+      `;
+    case 'shopping':
+      return `<path d="M17 6h-2c0-2.21-1.79-4-4-4S7 3.79 7 6H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6-2c1.1 0 2 .9 2 2H9c0-1.1.9-2 2-2zm0 13c-2.21 0-4-1.79-4-4h2c0 1.1.9 2 2 2s2-.9 2-2h2c0 2.21-1.79 4-4 4z" fill="${c}"/>`;
+    case 'doctor':
+      return `
+        <path d="M10.5 13h3v-2.5h2.5v-3h-2.5V5h-3v2.5H8v3h2.5V13z" fill="${c}"/>
+        <path d="M12 2v20M9 18l3 2 3-2" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/>
+      `;
+    case 'pet friendly':
+      return `
+        <path d="M12 11c-1.5 0-3 1.5-3 3s1.5 3 3 3 3-1.5 3-3-1.5-3-3-3z" fill="${c}"/>
+        <path d="M12 15s-1-1-1-1.5.5-1 1-1 1 .5 1 1-.5 1.5-1 1.5z" fill="${c === 'white' ? 'black' : 'white'}"/>
+        <circle cx="8" cy="8" r="2" fill="${c}"/><circle cx="16" cy="8" r="2" fill="${c}"/>
+        <circle cx="5" cy="11.5" r="2" fill="${c}"/><circle cx="19" cy="11.5" r="2" fill="${c}"/>
+      `;
+    case 'cafe':
+      return `
+        <path d="M5 10c0 3 2 5 5 5h3c3 0 5-2 5-5H5z" fill="${c}"/>
+        <path d="M18 10h1c1.5 0 2-1 2-2s-.5-2-2-2h-1v4z" fill="${c}"/>
+        <path d="M8 4l1 3M12 3v4M16 4l-1 3" stroke="${c}" stroke-width="1.5" stroke-linecap="round"/>
+      `;
+    case 'bar':
+      return `
+        <path d="M5 5l7 8 7-8H5z" fill="${c}"/>
+        <path d="M12 13v6M8 19h8" stroke="${c}" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="15" cy="7" r="1.5" fill="${c}"/>
+      `;
+    case 'hotel':
+      return `
+        <path d="M6 6h12v12H6V6z" fill="${c}"/>
+        <path d="M10 10h4v4h-4v-4z" fill="white" opacity="0.3"/>
+        <path d="M11 12h2v4h-2v-4z" fill="white"/>
+        <path d="M12 8l-1 2h2l-1-2z" fill="white"/>
+      `;
+    case 'sightseeing':
+      return `
+        <circle cx="12" cy="12" r="3" fill="${c}"/>
+        <path d="M20 4h-3.17L15 2H9L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z" fill="${c}"/>
+      `;
+    case 'home product':
+      return `
+        <path d="M12 4L4 11v9h16v-9L12 4z" fill="${c}"/>
+        <path d="M12 13v3M10.5 14.5h3" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="12" cy="14" r="2" fill="white" opacity="0.4"/>
+      `;
+    default:
+      return `<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="${c}"/>`;
+  }
+};
+
+const getCategoryEmoji = (cat: string) => {
+  if (!cat) return '📍';
+  switch(cat.toLowerCase()) {
+    case 'restaurant': return '🍴';
+    case 'shopping': return '🛍️';
+    case 'doctor': return '⚕️';
+    case 'pet friendly': return '🐾';
+    case 'cafe': return '☕';
+    case 'bar': return '🍸';
+    case 'hotel': return '🏨';
+    case 'sightseeing': return '📸';
+    case 'home product': return '🏠';
+    default: return '📍';
+  }
+};
+
+const getCategoryIcon = (cat: string) => {
+  if (!cat) return <MapPin className="w-5 h-5" />;
+  const colors = getCategoryColor(cat);
+  const color = colors.main;
+  switch(cat.toLowerCase()) {
+    case 'restaurant': return <Utensils className="w-5 h-5" style={{ color }} />;
+    case 'shopping': return <ShoppingBag className="w-5 h-5" style={{ color }} />;
+    case 'doctor': return <Stethoscope className="w-5 h-5" style={{ color }} />;
+    case 'pet friendly': return <PawPrint className="w-5 h-5" style={{ color }} />;
+    case 'cafe': return <Coffee className="w-5 h-5" style={{ color }} />;
+    case 'bar': return <GlassWater className="w-5 h-5" style={{ color }} />;
+    case 'hotel': return <Hotel className="w-5 h-5" style={{ color }} />;
+    case 'sightseeing': return <Landmark className="w-5 h-5" style={{ color }} />;
+    case 'home product': return <Sofa className="w-5 h-5" style={{ color }} />;
+    default: return <MapPin className="w-5 h-5" style={{ color }} />;
+  }
+};
+
+const MarkerHtmlContent = ({m, isSelected}: {m: LociMarker, isSelected: boolean}) => {
+  const iconElement = getCategoryIcon(m.category);
+  // Modify the icon color to be white, while keeping its structure
+  const IconElementWhite = React.cloneElement(iconElement as React.ReactElement, {
+    style: { color: '#FFFFFF' }
+  });
+
+  return (
+    <div 
+      className="group"
+      style={{
+        backgroundColor: '#FFFFFF',
+        borderRadius: '50px',
+        boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+        display: 'flex',
+        alignItems: 'center',
+        padding: '4px 12px 4px 4px',
+        transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
+        transformOrigin: 'center center',
+        transform: isSelected ? 'scale(1.05)' : 'scale(1)',
+        cursor: 'pointer'
+      }}
+    >
+      <div style={{
+        width: '28px',
+        height: '28px',
+        borderRadius: '50%',
+        backgroundColor: getCategoryColor(m.category).main,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0
+      }}>
+        {IconElementWhite}
+      </div>
+      <div style={{
+        fontWeight: 'bold',
+        color: '#000000',
+        marginLeft: '8px',
+        fontSize: '14px'
+      }}>
+        {m.rating ? m.rating.toFixed(1) : 0}
+      </div>
+    </div>
+  );
+};
+
+function AppInner() {
+  const [user, loading] = useAuthState(auth);
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [markers, setMarkers] = useState<LociMarker[]>([]);
+  const [selectedMarker, setSelectedMarker] = useState<LociMarker | null>(null);
+  const [isEditingMarker, setIsEditingMarker] = useState(false);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [newReviewText, setNewReviewText] = useState('');
+  const [newReviewRating, setNewReviewRating] = useState(5);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [markerCategory, setMarkerCategory] = useState('other');
+  const [customCategoryInput, setCustomCategoryInput] = useState('');
+  const [newMarkerTags, setNewMarkerTags] = useState<string[]>([]);
+  const [newMarkerTagInput, setNewMarkerTagInput] = useState('');
+  const [savedTags, setSavedTags] = useState<string[]>([]);
+  
+  const [newMarkerFiles, setNewMarkerFiles] = useState<File[]>([]);
+  const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]);
+  const [newMarkerLinks, setNewMarkerLinks] = useState<string[]>([]);
+  const [newMarkerLinkInput, setNewMarkerLinkInput] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('customCategories');
+    if (saved) {
+      try { setCustomCategories(JSON.parse(saved)); } catch (e) {}
+    }
+    const savedTagsLocal = localStorage.getItem('savedTags');
+    if (savedTagsLocal) {
+      try { setSavedTags(JSON.parse(savedTagsLocal)); } catch (e) {}
+    } else {
+      setSavedTags(['Birthday', 'Anniversary', '好食到著兩條褲']);
+    }
+  }, []);
+
+  const handleAddCustomCategory = (cat: string) => {
+    const trimmed = cat.trim();
+    if (trimmed && !customCategories.includes(trimmed)) {
+      const newCustom = [...customCategories, trimmed];
+      setCustomCategories(newCustom);
+      localStorage.setItem('customCategories', JSON.stringify(newCustom));
+    }
+  };
+
+  const handleRemoveCustomCategory = (e: React.MouseEvent, cat: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const newCustom = customCategories.filter(c => c !== cat);
+    setCustomCategories(newCustom);
+    localStorage.setItem('customCategories', JSON.stringify(newCustom));
+  };
+
+  const handleAddTagToMarkerAndSaved = (tag: string) => {
+    if (!newMarkerTags.includes(tag)) {
+      setNewMarkerTags([...newMarkerTags, tag]);
+    }
+    if (!savedTags.includes(tag)) {
+      const newSaved = [...savedTags, tag];
+      setSavedTags(newSaved);
+      localStorage.setItem('savedTags', JSON.stringify(newSaved));
+    }
+  };
+
+  const handleRemoveSavedTag = (e: React.MouseEvent, tag: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const newSaved = savedTags.filter(t => t !== tag);
+    setSavedTags(newSaved);
+    localStorage.setItem('savedTags', JSON.stringify(newSaved));
+  };
+
+  const [isAddingMarker, setIsAddingMarker] = useState<{lat: number, lng: number} | null>(null);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [activeSheet, setActiveSheet] = useState<'none' | 'communities' | 'discover' | 'settings'>('none');
+  const [selectedFilterCategory, setSelectedFilterCategory] = useState<string | null>(null);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [isJoiningGroup, setIsJoiningGroup] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => void} | null>(null);
+  const [searchResultMarker, setSearchResultMarker] = useState<{lat: number, lng: number, name: string} | null>(null);
+  const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
+
+  const mapObj = useMap();
+
+  const handleLocateMe = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          if (mapObj) {
+            mapObj.panTo({ lat, lng });
+            mapObj.setZoom(15);
+          }
+        },
+        (error) => {
+          console.error("Error getting location:", error);
+          alert("Unable to find your location. Please check your permissions.");
+        }
+      );
+    } else {
+      alert("Geolocation is not supported by your browser.");
+    }
+  };
+
+  const handleSelectSuggestion = (place: any) => {
+    try {
+      const lat = place.geometry?.location?.lat();
+      const lon = place.geometry?.location?.lng();
+      const name = place.name;
+      
+      if (!lat || !lon) return;
+      
+      setMapCenter([lat, lon]);
+      setSearchResultMarker({ lat, lng: lon, name });
+    } catch (err) {
+      console.error('Select suggestion error:', err);
+    }
+  };
+
+  // Auto-login logic
+  useEffect(() => {
+    if (user) {
+      const userRef = doc(db, 'users', user.uid);
+      getDocFromServer(userRef).then(docSnap => {
+        if (!docSnap.exists()) {
+          setDoc(userRef, {
+            displayName: user.displayName || 'Anonymous',
+            createdAt: serverTimestamp(),
+          }).catch(err => handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}`));
+        }
+      });
+    }
+  }, [user]);
+
+  // Fetch groups
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'groups'), where('ownerId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const gList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Group));
+      setGroups(gList);
+      if (!selectedGroup && gList.length > 0) setSelectedGroup(gList[0]);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'groups'));
+
+    return () => unsubscribe();
+  }, [user, selectedGroup]);
+
+  // Fetch markers for selected group
+  useEffect(() => {
+    if (!selectedGroup) return;
+    const markersRef = collection(db, 'groups', selectedGroup.id!, 'markers');
+    const unsubscribe = onSnapshot(markersRef, (snapshot) => {
+      setMarkers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LociMarker)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, `groups/${selectedGroup.id}/markers`));
+
+    return () => unsubscribe();
+  }, [selectedGroup]);
+
+  // Fetch reviews when marker selected
+  useEffect(() => {
+    if (!selectedGroup || !selectedMarker) {
+      setReviews([]);
+      return;
+    }
+    const reviewsRef = collection(db, 'groups', selectedGroup.id!, 'markers', selectedMarker.id!, 'reviews');
+    const unsubscribe = onSnapshot(reviewsRef, (snapshot) => {
+      setReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Review)).sort((a,b) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : a.createdAt;
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : b.createdAt;
+        return (timeB || 0) - (timeA || 0);
+      }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, `groups/${selectedGroup.id}/markers/${selectedMarker.id}/reviews`));
+
+    return () => unsubscribe();
+  }, [selectedGroup, selectedMarker]);
+
+  const handleCreateGroup = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const name = formData.get('name') as string;
+    if (!name || !user) return;
+
+    setIsCreatingGroup(false);
+
+    try {
+      const groupData = {
+        name,
+        ownerId: user.uid,
+        createdAt: serverTimestamp(),
+        inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase()
+      };
+      const docRef = await addDoc(collection(db, 'groups'), groupData);
+      
+      // Auto-add owner as member
+      await setDoc(doc(db, 'groups', docRef.id, 'members', user.uid), {
+        role: 'owner',
+        joinedAt: serverTimestamp()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'groups');
+    }
+  };
+
+  const handleJoinGroupSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const code = formData.get('code') as string;
+    
+    setIsJoiningGroup(false);
+
+    if (code && user) {
+      getDocs(query(collection(db, 'groups'), where('inviteCode', '==', code.toUpperCase()))).then(res => {
+        if (!res.empty) {
+          const groupId = res.docs[0].id;
+          setDoc(doc(db, 'groups', groupId, 'members', user.uid), {
+            role: 'member',
+            joinedAt: serverTimestamp()
+          });
+        }
+      });
+    }
+  };
+
+  const handleAddReview = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedGroup || !selectedMarker || !user || !newReviewText.trim()) return;
+
+    try {
+      const reviewData = {
+        text: newReviewText,
+        rating: newReviewRating,
+        ownerId: user.uid,
+        createdAt: serverTimestamp()
+      };
+      const currentRating = selectedMarker.rating || 5;
+      const currentReviewCount = selectedMarker.reviewCount || 1;
+      const newReviewCount = currentReviewCount + 1;
+      const newAverageRating = ((currentRating * currentReviewCount) + newReviewRating) / newReviewCount;
+      
+      await addDoc(collection(db, 'groups', selectedGroup.id!, 'markers', selectedMarker.id!, 'reviews'), reviewData);
+      await updateDoc(doc(db, 'groups', selectedGroup.id!, 'markers', selectedMarker.id!), {
+        rating: Math.round(newAverageRating * 10) / 10,
+        reviewCount: newReviewCount
+      });
+      setNewReviewText('');
+      setNewReviewRating(5);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `groups/${selectedGroup.id}/markers/${selectedMarker.id}/reviews`);
+    }
+  };
+
+  const handleDeleteMarker = async (markerId: string) => {
+    if (!selectedGroup) return;
+    setConfirmDialog({
+      message: 'Are you sure you want to delete this vibe?',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'groups', selectedGroup.id!, 'markers', markerId));
+          setSelectedMarker(null);
+          setConfirmDialog(null);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `groups/${selectedGroup.id}/markers/${markerId}`);
+        }
+      }
+    });
+  };
+
+  const handleUpdateMarker = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user || !selectedMarker || !selectedGroup) return;
+    
+    setIsUploading(true);
+    const formData = new FormData(e.currentTarget);
+    
+    let uploadedUrls: string[] = [];
+    try {
+      uploadedUrls = await uploadFilesToStorage(newMarkerFiles);
+    } catch (err) {
+      alert('Failed to upload photos. Please try again.');
+      setIsUploading(false);
+      return;
+    }
+    
+    const updatedData = {
+      name: (formData.get('name') as string),
+      category: markerCategory,
+      emoji: getCategoryEmoji(markerCategory),
+      description: (formData.get('description') as string),
+      externalLinks: newMarkerLinks,
+      imageUrls: [...existingImageUrls, ...uploadedUrls],
+      rating: Number(newReviewRating),
+      lat: selectedMarker.lat,
+      lng: selectedMarker.lng,
+      tags: newMarkerTags,
+      ownerId: selectedMarker.ownerId,
+      createdAt: selectedMarker.createdAt,
+      reviewCount: selectedMarker.reviewCount || 1
+    };
+
+    try {
+      await setDoc(doc(db, 'groups', selectedGroup.id!, 'markers', selectedMarker.id!), updatedData);
+      setIsEditingMarker(false);
+      setSelectedMarker({ ...selectedMarker, ...updatedData });
+      setIsUploading(false);
+    } catch (err) {
+      setIsUploading(false);
+      handleFirestoreError(err, OperationType.UPDATE, `groups/${selectedGroup.id}/markers/${selectedMarker.id}`);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId: string) => {
+    setConfirmDialog({
+      message: 'Are you sure you want to delete this tribe? This action is irreversible.',
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'groups', groupId));
+          if (selectedGroup?.id === groupId) setSelectedGroup(null);
+          setConfirmDialog(null);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `groups/${groupId}`);
+        }
+      }
+    });
+  };
+
+  const handleMapClick = (lat: number, lng: number) => {
+    setIsAddingMarker({ lat, lng });
+    setMarkerCategory('other');
+    setCustomCategoryInput('');
+    setNewMarkerTags([]);
+    setNewMarkerTagInput('');
+    setNewMarkerFiles([]);
+    setExistingImageUrls([]);
+    setNewMarkerLinks([]);
+    setNewMarkerLinkInput('');
+  };
+
+  const uploadFilesToStorage = async (files: File[]): Promise<string[]> => {
+    const urls: string[] = [];
+    for (const file of files) {
+      if (typeof file === 'string') continue;
+      const fileRef = ref(storage, `markers/${Date.now()}_${file.name}`);
+      const snapshot = await uploadBytesResumable(fileRef, file);
+      const url = await getDownloadURL(snapshot.ref);
+      urls.push(url);
+    }
+    return urls;
+  };
+
+  const handleAddMarker = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user || !isAddingMarker) return;
+    if (!selectedGroup || !selectedGroup.id) {
+      alert('Please select or create a group first!');
+      return;
+    }
+    
+    setIsUploading(true);
+    const formData = new FormData(e.currentTarget);
+    
+    let uploadedUrls: string[] = [];
+    try {
+      uploadedUrls = await uploadFilesToStorage(newMarkerFiles);
+    } catch (err) {
+      alert('Failed to upload photos. Please try again.');
+      setIsUploading(false);
+      return;
+    }
+    
+    const markerData = {
+      name: (formData.get('name') as string) || 'New Spot',
+      category: markerCategory || 'other',
+      emoji: getCategoryEmoji(markerCategory),
+      description: (formData.get('description') as string) || '',
+      lat: Number(isAddingMarker.lat),
+      lng: Number(isAddingMarker.lng),
+      externalLinks: newMarkerLinks,
+      imageUrls: uploadedUrls,
+      rating: Number(newReviewRating),
+      reviewCount: 1,
+      tags: newMarkerTags,
+      ownerId: user.uid,
+      createdAt: serverTimestamp()
+    };
+
+    console.log('Attempting to publish marker:', markerData);
+
+    try {
+      const markersRef = collection(db, 'groups', selectedGroup.id, 'markers');
+      await addDoc(markersRef, markerData);
+    } catch (err: any) {
+      console.error('Publish Error Detail:', err);
+      try {
+        handleFirestoreError(err, OperationType.CREATE, `groups/${selectedGroup.id}/markers`);
+      } catch (e: any) {
+        alert('Publish Failed: ' + e.message);
+      }
+    }
+
+    setIsAddingMarker(null);
+    setNewReviewRating(5);
+    setIsUploading(false);
+    setNewMarkerFiles([]);
+    setNewMarkerLinks([]);
+    setNewMarkerLinkInput('');
+  };
+
+  if (loading) return (
+    <div className="flex h-screen w-full items-center justify-center bg-white">
+      <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }} className="w-10 h-10 border-4 border-black border-t-transparent rounded-full" />
+    </div>
+  );
+
+  if (!user) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-white text-black font-sans">
+        <div className="bg-white p-10 rounded-3xl border border-gray-50 shadow-2xl max-sm w-full text-center">
+          <div className="flex justify-center mb-8">
+            <motion.div 
+              initial={{ scale: 0 }} animate={{ scale: 1 }} 
+              className="w-24 h-24 bg-black rounded-[2.5rem] flex items-center justify-center text-white font-black text-6xl shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-linear-to-tr from-violet-600 to-transparent opacity-40" />
+              <span className="relative z-10">Y</span>
+            </motion.div>
+          </div>
+          <h1 className="text-4xl font-black tracking-tighter mb-2 italic">YVIBE</h1>
+          <p className="text-sm text-gray-400 mb-10 font-medium">Capture. Map. Vibe.</p>
+          <button 
+            onClick={() => signInWithPopup(auth, new GoogleAuthProvider())}
+            className="w-full bg-black text-white font-bold py-5 rounded-2xl hover:bg-gray-800 transition-all flex items-center justify-center gap-3 shadow-xl active:scale-95"
+          >
+            Connect via Google
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen w-full bg-white text-black font-sans overflow-hidden relative">
+      {/* Map Content - Always Visible */}
+      <div className="absolute inset-0">
+        <Map
+          mapId="54d37c42ca1d0911214f73eb"
+          defaultCenter={{
+            lng: 114.1694,
+            lat: 22.3193
+          }}
+                defaultZoom={12}
+                zoomControl={true}
+                zoomControlOptions={{ position: ControlPosition.RIGHT_BOTTOM }}
+                mapTypeControl={false}
+                streetViewControl={false}
+                internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                style={{width: '100%', height: '100%'}}
+                onClick={(e) => {
+                  if (e.detail.latLng) {
+                    const lat = typeof e.detail.latLng.lat === 'function' ? e.detail.latLng.lat() : e.detail.latLng.lat;
+                    const lng = typeof e.detail.latLng.lng === 'function' ? e.detail.latLng.lng() : e.detail.latLng.lng;
+                    handleMapClick(lat, lng);
+                  }
+                }}
+              >
+                <MapController key="map-control" center={mapCenter} />
+                
+                {searchResultMarker && (
+                  <MapboxMarker key="search-marker" position={{ lat: searchResultMarker.lat, lng: searchResultMarker.lng }}>
+                     <div className="bg-blue-500 w-4 h-4 rounded-full border-2 border-white shadow-xl" />
+                  </MapboxMarker>
+                )}
+
+                {isAddingMarker && (
+                  <MapboxMarker key="adding-marker" position={{ lat: isAddingMarker.lat, lng: isAddingMarker.lng }}>
+                    <div className="bg-black w-3 h-3 rounded-full border-2 border-white shadow-xl animate-bounce" />
+                  </MapboxMarker>
+                )}
+
+                <ClusteredMarkers 
+                  markers={selectedFilterCategory ? markers.filter(m => m.category.toLowerCase() === selectedFilterCategory.toLowerCase()) : markers}
+                  selectedMarker={selectedMarker}
+                  onMarkerClick={setSelectedMarker}
+                  MarkerHtmlContent={({m, isSelected}) => <MarkerHtmlContent m={m} isSelected={isSelected} />}
+                />
+                </Map>
+              
+              <AnimatePresence>
+                {isSearchExpanded && (
+                  <motion.div 
+                    key="search-expanded-box"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="fixed bottom-32 right-4 md:right-1/2 md:translate-x-[calc(50%+4rem)] max-w-sm w-[calc(100%-2rem)] md:w-[320px] bg-white/95 backdrop-blur-2xl rounded-[2rem] shadow-[0_16px_40px_rgba(0,0,0,0.2)] border border-black/5 p-4 pointer-events-auto flex items-center gap-4 z-[500]"
+                  >
+                    <PlaceAutocomplete 
+                      onPlaceSelect={(place) => { handleSelectSuggestion(place); setIsSearchExpanded(false); }} 
+                      onClear={() => { setSearchResultMarker(null); setMapCenter(null); }} 
+                      hasValue={!!searchResultMarker} 
+                    />
+                    <button onClick={() => setIsSearchExpanded(false)} className="shrink-0 p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 hover:text-black transition-colors">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+            </div>
+
+        {/* iOS 18 Apple Music Style Bottom Tab Bar */}
+        <div className="fixed bottom-6 left-0 right-0 px-4 md:px-0 md:left-1/2 md:-translate-x-1/2 flex justify-center items-center gap-2 pointer-events-none z-[1000] pb-[env(safe-area-inset-bottom)]">
+          {/* Main Navigation Pill */}
+          <nav className="pointer-events-auto bg-white/85 backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-black/5 flex justify-around items-center px-4 py-3 rounded-full flex-1 max-w-[320px]">
+            <button onClick={() => setActiveSheet('none')} className={`flex flex-col items-center justify-center gap-1 w-12 transition-colors ${activeSheet === 'none' ? 'text-[#FA233A]' : 'text-gray-400'}`}>
+              <MapPin className={`w-[22px] h-[22px] ${activeSheet === 'none' ? 'fill-[#FA233A] stroke-[#FA233A]' : 'stroke-[1.5]'}`} />
+              <span className="text-[9px] font-bold tracking-tight">Map</span>
+            </button>
+            <button onClick={() => setActiveSheet('communities')} className={`flex flex-col items-center justify-center gap-1 w-12 transition-colors ${activeSheet === 'communities' ? 'text-[#FA233A]' : 'text-gray-400'}`}>
+              <Users className={`w-[22px] h-[22px] ${activeSheet === 'communities' ? 'fill-[#FA233A] stroke-[#FA233A]' : 'stroke-[1.5]'}`} />
+              <span className="text-[9px] font-bold tracking-tight">Tribes</span>
+            </button>
+            <button onClick={() => setActiveSheet('discover')} className={`flex flex-col items-center justify-center gap-1 w-12 transition-colors ${activeSheet === 'discover' ? 'text-[#FA233A]' : 'text-gray-400'}`}>
+              <Compass className={`w-[22px] h-[22px] ${activeSheet === 'discover' ? 'fill-[#FA233A] stroke-[#FA233A]' : 'stroke-[1.5]'}`} />
+              <span className="text-[9px] font-bold tracking-tight">Discover</span>
+            </button>
+            <button onClick={() => setActiveSheet('settings')} className={`flex flex-col items-center justify-center gap-1 w-12 transition-colors ${activeSheet === 'settings' ? 'text-[#FA233A]' : 'text-gray-400'}`}>
+              <div className={`w-6 h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${activeSheet === 'settings' ? 'border-[#FA233A]' : 'border-transparent'}`}>
+                 <img src={user.photoURL || ''} alt="" className="w-full h-full object-cover" />
+              </div>
+              <span className="text-[9px] font-bold tracking-tight">You</span>
+            </button>
+          </nav>
+          
+          {/* Locate Button Circle */}
+          <button 
+            onClick={handleLocateMe}
+            className={`pointer-events-auto bg-white/85 backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-black/5 rounded-full w-[4.25rem] h-[4.25rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 text-gray-400 hover:text-black active:scale-95`}
+          >
+            <LocateFixed className="w-[22px] h-[22px] stroke-[1.5]" />
+            <span className="text-[9px] font-bold tracking-tight">Locate</span>
+          </button>
+
+          {/* Search Button Circle */}
+          <button 
+            onClick={() => setIsSearchExpanded(true)}
+            className={`pointer-events-auto bg-white/85 backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-black/5 rounded-full w-[4.25rem] h-[4.25rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 active:scale-95 ${isSearchExpanded ? 'text-[#FA233A]' : 'text-gray-400 hover:text-black'}`}
+          >
+            <Search className={`w-[22px] h-[22px] ${isSearchExpanded ? 'stroke-[#FA233A]' : 'stroke-[1.5]'}`} />
+            <span className="text-[9px] font-bold tracking-tight">Search</span>
+          </button>
+        </div>
+
+        {/* Panels & Overlays */}
+        <AnimatePresence>
+          {activeSheet !== 'none' && (
+            <>
+              <motion.div 
+                key="sheet-backdrop" 
+                initial={{ opacity: 0 }} 
+                animate={{ opacity: 1 }} 
+                exit={{ opacity: 0 }} 
+                onClick={() => setActiveSheet('none')}
+                className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[2000]"
+              />
+              <motion.div 
+                key="sheet-panel" 
+                initial={{ y: '100%' }} 
+                animate={{ y: 0 }} 
+                exit={{ y: '100%' }} 
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                className="fixed bottom-0 left-0 right-0 w-full bg-white shadow-2xl z-[2001] flex flex-col overflow-hidden rounded-t-[2.5rem] max-h-[85vh] pb-[max(env(safe-area-inset-bottom),1rem)]"
+              >
+                <div className="flex justify-center p-4 pb-0">
+                   <div className="w-12 h-1.5 bg-gray-200 rounded-full" />
+                </div>
+                <div className="p-6 pb-2 flex items-center justify-between">
+                  <h2 className="text-2xl font-black italic shrink-0">
+                    {activeSheet === 'communities' ? 'COMMUNITIES' : activeSheet === 'discover' ? 'DISCOVER' : 'SETTINGS'}
+                  </h2>
+                  <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
+                    {activeSheet === 'communities' && (
+                      <div className="flex gap-2 shrink-0">
+                          <button onClick={() => { setIsJoiningGroup(true); setActiveSheet('none'); }} className="py-2 px-4 rounded-full border-2 border-gray-100 text-[10px] font-black uppercase tracking-widest hover:border-black transition-colors">Join</button>
+                          <button onClick={() => { setIsCreatingGroup(true); setActiveSheet('none'); }} className="py-2 px-4 rounded-full bg-black text-white text-[10px] font-black uppercase tracking-widest hover:bg-gray-900 transition-colors">Create</button>
+                      </div>
+                    )}
+                    <button onClick={() => setActiveSheet('none')} className="p-2 hover:bg-gray-100 rounded-full transition-colors shrink-0"><X className="w-6 h-6" /></button>
+                  </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto scrollbar-hide p-6 space-y-8">
+                  
+                  {activeSheet === 'communities' && (
+                    <div>
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em]">Your Tribes</p>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-3">
+                        {groups.map(group => (
+                          <div key={group.id} className="relative group">
+                            <button 
+                              onClick={() => { setSelectedGroup(group); setActiveSheet('none'); }}
+                              className={`w-full flex flex-col items-center gap-2 p-3 rounded-3xl text-center transition-all ${
+                                selectedGroup?.id === group.id ? 'bg-black text-white shadow-xl scale-[1.02]' : 'bg-gray-50 hover:bg-gray-100'
+                              }`}
+                            >
+                              <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl font-black shrink-0 ${
+                                selectedGroup?.id === group.id ? 'bg-white/20 text-white' : 'bg-white text-black shadow-sm'
+                              }`}>
+                                {group.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0 w-full overflow-hidden flex flex-col items-center">
+                                <p className="text-[11px] font-black truncate w-full">{group.name}</p>
+                                <p className={`text-[8px] font-bold uppercase tracking-widest mt-1 ${selectedGroup?.id === group.id ? 'text-gray-400' : 'text-gray-400'}`}>
+                                  # {group.inviteCode}
+                                </p>
+                              </div>
+                            </button>
+                            {group.ownerId === user.uid && (
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group.id!); }}
+                                className={`absolute right-1 top-1 p-1.5 rounded-full transition-all ${selectedGroup?.id === group.id ? 'bg-white/20 text-white/70 hover:text-white hover:bg-red-500' : 'bg-white text-gray-400 hover:text-white hover:bg-red-500 shadow-sm opacity-0 group-hover:opacity-100'}`}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeSheet === 'discover' && (
+                    <div>
+                      <div className="flex items-center justify-between mb-4">
+                        <p className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em]">Map Filters</p>
+                        {selectedFilterCategory && (
+                          <button onClick={() => { setSelectedFilterCategory(null); setActiveSheet('none'); }} className="text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600">Clear</button>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {['Restaurant', 'Shopping', 'Doctor', 'Pet Friendly', 'Cafe', 'Bar', 'Hotel', 'Sightseeing', 'Home Product', ...customCategories].map(cat => (
+                          <button 
+                            key={cat} 
+                            className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${
+                              selectedFilterCategory?.toLowerCase() === cat.toLowerCase() ? 'bg-blue-50 border border-blue-100' : 'hover:bg-gray-50 border border-transparent'
+                            }`}
+                            onClick={() => {
+                              setSelectedFilterCategory(cat);
+                              setActiveSheet('none');
+                            }}>
+                            <span className="text-sm font-bold text-gray-700 flex items-center gap-3">
+                              {getCategoryIcon(cat.toLowerCase())} {cat}
+                            </span>
+                            {selectedFilterCategory?.toLowerCase() === cat.toLowerCase() && <div className="w-2 h-2 bg-blue-500 rounded-full" />}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {activeSheet === 'settings' && (
+                    <div>
+                      <div className="space-y-4">
+                        {/* Profile Info */}
+                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
+                          <div className="flex items-center gap-3">
+                            <img src={user.photoURL || ''} alt="" className="w-12 h-12 rounded-[1rem] bg-white shadow-sm border border-gray-100 object-cover" referrerPolicy="no-referrer" />
+                            <div>
+                              <p className="text-lg font-black truncate max-w-[150px]">{user.displayName}</p>
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">{user.email}</p>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-2 pt-4">
+                          {/* Logout Button */}
+                          <button onClick={() => { setActiveSheet('none'); signOut(auth); }} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors border border-transparent text-red-500 hover:text-red-600">
+                            <span className="text-sm font-bold flex items-center gap-3">
+                              <LogOut className="w-4 h-4" /> 
+                              Logout
+                            </span>
+                          </button>
+                        </div>
+  
+                        <div className="pt-8 text-center">
+                           <span className="text-[9px] font-black text-gray-300 uppercase tracking-[0.2em]">App Version v1.3.2</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              </motion.div>
+            </>
+          )}
+
+          {isCreatingGroup && (
+            <motion.div key="create-group" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 backdrop-blur-xl z-[2000] flex items-center justify-center p-6">
+              <motion.form 
+                initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }}
+                onSubmit={handleCreateGroup}
+                className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-sm text-center"
+              >
+                <h2 className="text-3xl font-black mb-8 italic">Create Tribe</h2>
+                <input name="name" required autoFocus className="w-full bg-gray-50 border-none rounded-2xl p-6 mb-8 text-lg font-bold outline-none ring-offset-4 focus:ring-4 ring-black/5" placeholder="Weekend Foodies..." />
+                <div className="flex gap-4">
+                  <button type="button" onClick={() => setIsCreatingGroup(false)} className="flex-1 py-5 text-sm font-black text-gray-300 hover:text-black uppercase tracking-widest">Cancel</button>
+                  <button type="submit" className="flex-2 bg-black text-white py-5 rounded-2xl font-black shadow-xl uppercase tracking-widest text-sm">Launch</button>
+                </div>
+              </motion.form>
+            </motion.div>
+          )}
+
+          {isJoiningGroup && (
+            <motion.div key="join-group" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 backdrop-blur-xl z-[2000] flex items-center justify-center p-6">
+              <motion.form 
+                initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }}
+                onSubmit={handleJoinGroupSubmit}
+                className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-sm text-center"
+              >
+                <h2 className="text-3xl font-black mb-8 italic">Join Tribe</h2>
+                <input name="code" required autoFocus className="w-full bg-gray-50 border-none rounded-2xl p-6 mb-8 text-lg font-bold outline-none ring-offset-4 focus:ring-4 ring-black/5" placeholder="Invite Code..." />
+                <div className="flex gap-4">
+                  <button type="button" onClick={() => setIsJoiningGroup(false)} className="flex-1 py-5 text-sm font-black text-gray-300 hover:text-black uppercase tracking-widest">Cancel</button>
+                  <button type="submit" className="flex-2 bg-black text-white py-5 px-8 rounded-2xl font-black shadow-xl uppercase tracking-widest text-sm">Join</button>
+                </div>
+              </motion.form>
+            </motion.div>
+          )}
+
+          {confirmDialog && (
+            <motion.div key="confirm-dialog" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 backdrop-blur-xl z-[3000] flex items-center justify-center p-6">
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }}
+                className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-sm text-center"
+              >
+                <h2 className="text-2xl font-black mb-6 italic text-red-500">PLEASE CONFIRM</h2>
+                <p className="text-sm font-bold text-gray-600 mb-8 leading-relaxed max-w-[200px] mx-auto">{confirmDialog.message}</p>
+                <div className="flex gap-4">
+                  <button type="button" onClick={() => setConfirmDialog(null)} className="flex-1 py-5 text-sm font-black text-gray-300 hover:text-black uppercase tracking-widest">Cancel</button>
+                  <button onClick={confirmDialog.onConfirm} className="flex-2 bg-red-500 text-white py-5 px-8 rounded-2xl font-black shadow-xl uppercase tracking-widest text-sm">Delete</button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {isAddingMarker && (
+            <div key="add-marker" className="fixed inset-0 lg:absolute lg:inset-y-0 lg:right-0 lg:left-auto lg:w-[340px] z-[2005] flex items-center justify-center p-6 lg:p-8 pointer-events-none">
+              <motion.form 
+                initial={{ scale: 0.9, opacity: 0, y: 20 }} 
+                animate={{ scale: 1, opacity: 1, y: 0 }} 
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                onSubmit={handleAddMarker} 
+                className="bg-white w-full max-h-[85vh] lg:rounded-[2.5rem] rounded-[2rem] shadow-[0_50px_100px_rgba(0,0,0,0.3)] overflow-y-auto scrollbar-hide flex flex-col pointer-events-auto relative border border-gray-100"
+              >
+                <div className="p-5 bg-black text-white shrink-0 relative">
+                  <h2 className="text-xl font-black tracking-tighter mb-0.5 italic">NEW VIBE</h2>
+                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest leading-none">Capture your discovery</p>
+                  
+                  <button 
+                    type="button" 
+                    onClick={() => setIsAddingMarker(null)}
+                    className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center bg-white/10 hover:bg-white/20 active:scale-95 text-white rounded-full transition-all"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                
+                <div className="p-4 space-y-4 text-black">
+                  <div className="space-y-3">
+                    <div>
+                      <input name="name" required placeholder="Name of place" className="w-full bg-gray-50 border-none rounded-xl p-3 text-xs font-bold outline-none ring-2 ring-transparent focus:ring-black/5" />
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-black text-gray-300 uppercase tracking-widest block">Category</label>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        {Array.from(new Set(['restaurant', 'shopping', 'doctor', 'pet friendly', 'cafe', 'bar', 'hotel', 'sightseeing', 'home product', ...customCategories.map(c => c.toLowerCase()), 'other'])).map(cat => (
+                          <div key={cat} className="relative group/cat">
+                            <button 
+                              type="button" 
+                              onClick={() => setMarkerCategory(cat)}
+                              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${markerCategory === cat ? 'bg-black text-white' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}
+                            >
+                              <div className="w-4 h-4 flex items-center justify-center scale-75">{getCategoryIcon(cat)}</div> {cat}
+                            </button>
+                            {customCategories.map(c => c.toLowerCase()).includes(cat) && (
+                              <button 
+                                 type="button"
+                                 onClick={(e) => handleRemoveCustomCategory(e, cat)}
+                                 className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full text-white shadow-md flex items-center justify-center opacity-0 group-hover/cat:opacity-100 transition-opacity"
+                              >
+                                <X className="w-3 h-3"/>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        <div className="flex gap-2 shrink-0">
+                          <input 
+                             value={customCategoryInput} 
+                             onChange={e => setCustomCategoryInput(e.target.value)} 
+                             placeholder="Custom..."
+                             className="w-24 bg-gray-50 border-none rounded-xl px-3 py-2 text-[10px] uppercase font-black outline-none tracking-widest"
+                             onKeyDown={(e) => {
+                               if (e.key === 'Enter') {
+                                 e.preventDefault();
+                                 if (customCategoryInput.trim()) {
+                                   handleAddCustomCategory(customCategoryInput); setMarkerCategory(customCategoryInput.trim()); setCustomCategoryInput('');
+                                 }
+                               }
+                             }}
+                          />
+                          <button 
+                             type="button" 
+                             onClick={() => { if (customCategoryInput.trim()) { handleAddCustomCategory(customCategoryInput); setMarkerCategory(customCategoryInput.trim()); setCustomCategoryInput(''); } }}
+                             className="bg-black text-white px-3 rounded-xl flex items-center justify-center transition-transform active:scale-95"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-50 p-3 rounded-xl flex items-center gap-2">
+                      <span className="text-[9px] font-black text-gray-300 uppercase tracking-widest mr-1">Rating</span>
+                      <div className="flex items-center gap-1.5">
+                        {[1,2,3,4,5].map(star => (
+                           <button key={star} type="button" onClick={() => setNewReviewRating(star)}>
+                             <Star className={`w-4 h-4 ${star <= newReviewRating ? 'fill-yellow-400 stroke-yellow-400' : 'text-gray-200'}`} />
+                           </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-black text-gray-300 uppercase tracking-widest block">Tags</label>
+                       <div className="flex flex-wrap gap-2">
+                         {newMarkerTags.map((tag, idx) => (
+                            <div key={idx} className="bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+                               {tag}
+                               <button type="button" onClick={() => setNewMarkerTags(newMarkerTags.filter((_, i) => i !== idx))} className="hover:text-red-500">
+                                 <X className="w-3 h-3" />
+                               </button>
+                            </div>
+                         ))}
+                       </div>
+                       <input 
+                         value={newMarkerTagInput}
+                         onChange={e => setNewMarkerTagInput(e.target.value)}
+                         onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              if (newMarkerTagInput.trim()) {
+                                 handleAddTagToMarkerAndSaved(newMarkerTagInput.trim());
+                                 setNewMarkerTagInput('');
+                              }
+                            }
+                         }}
+                         placeholder="Add tags (e.g., Birthday, Anniversary, 好食到著兩條褲) and press Enter..."
+                         className="w-full bg-gray-50 border-none rounded-xl p-3 text-xs font-bold outline-none ring-2 ring-transparent focus:ring-black/5"
+                       />
+                       
+                       {savedTags.length > 0 && (
+                         <div className="pt-1">
+                            <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2 border-t pt-2 mt-2">Frequently Used</p>
+                            <div className="flex flex-wrap gap-2">
+                               {savedTags.map(tag => (
+                                  <div key={tag} className="relative group/tag flex items-center">
+                                    <button 
+                                      type="button" 
+                                      onClick={() => handleAddTagToMarkerAndSaved(tag)}
+                                      className="bg-gray-50 border border-gray-100 text-gray-500 hover:text-black hover:border-gray-200 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1"
+                                    >
+                                      <Plus className="w-3 h-3" /> {tag}
+                                    </button>
+                                    <button 
+                                      type="button"
+                                      onClick={(e) => handleRemoveSavedTag(e, tag)}
+                                      className="ml-1 w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                               ))}
+                            </div>
+                         </div>
+                       )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <textarea name="description" placeholder="Notes / Tips..." className="w-full bg-gray-50 border-none rounded-xl p-3 text-xs font-bold outline-none h-20 resize-none placeholder:text-gray-300" />
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                       {newMarkerLinks.map((link, idx) => (
+                         <div key={idx} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-1.5 group">
+                           <ExternalLink className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                           <a href={link} target="_blank" rel="noreferrer" className="flex-1 text-[10px] font-bold text-blue-500 truncate">{link}</a>
+                           <button type="button" onClick={() => setNewMarkerLinks(newMarkerLinks.filter((_, i) => i !== idx))} className="text-gray-300 hover:text-red-500">
+                             <X className="w-3 h-3" />
+                           </button>
+                         </div>
+                       ))}
+                       <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-1.5 focus-within:ring-2 ring-black/5 ring-transparent">
+                         <ExternalLink className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                         <input 
+                           value={newMarkerLinkInput}
+                           onChange={e => setNewMarkerLinkInput(e.target.value)}
+                           onKeyDown={e => {
+                             if (e.key === 'Enter') {
+                               e.preventDefault();
+                               if (newMarkerLinkInput.trim()) {
+                                 setNewMarkerLinks([...newMarkerLinks, newMarkerLinkInput.trim()]);
+                                 setNewMarkerLinkInput('');
+                               }
+                             }
+                           }}
+                           placeholder="Add Web Link & press Enter..." 
+                           className="bg-transparent border-none w-full p-1.5 text-[10px] font-bold outline-none" 
+                         />
+                         <button 
+                           type="button"
+                           onClick={() => {
+                             if (newMarkerLinkInput.trim()) {
+                               setNewMarkerLinks([...newMarkerLinks, newMarkerLinkInput.trim()]);
+                               setNewMarkerLinkInput('');
+                             }
+                           }}
+                           className="text-gray-400 hover:text-black shrink-0"
+                         >
+                           <Plus className="w-4 h-4" />
+                         </button>
+                       </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        {newMarkerFiles.map((file, idx) => (
+                          <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden group border border-gray-100">
+                             <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" />
+                             <button type="button" onClick={() => setNewMarkerFiles(newMarkerFiles.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                               <X className="w-2 h-2" />
+                             </button>
+                          </div>
+                        ))}
+                        <label className="w-16 h-16 rounded-xl flex items-center justify-center bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-black cursor-pointer border-2 border-dashed border-gray-200 transition-colors">
+                           <Camera className="w-5 h-5" />
+                           <input 
+                             type="file" 
+                             multiple 
+                             accept="image/*" 
+                             className="hidden" 
+                             onChange={(e) => {
+                               if (e.target.files) {
+                                 setNewMarkerFiles([...newMarkerFiles, ...Array.from(e.target.files)]);
+                               }
+                             }} 
+                           />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-5 bg-white border-t border-gray-50 flex gap-2 shrink-0">
+                  <button type="submit" disabled={isUploading} className="w-full bg-black text-white py-4 rounded-xl font-black shadow-xl uppercase tracking-[0.2em] text-[10px] active:scale-95 transition-all disabled:opacity-50">
+                    {isUploading ? 'Uploading...' : 'Publish Discovery'}
+                  </button>
+                </div>
+              </motion.form>
+            </div>
+          )}
+
+          {selectedMarker && !isAddingMarker && (
+            <div key="selected-marker" className="fixed inset-0 md:absolute md:inset-y-0 md:right-0 md:left-auto md:w-[500px] z-[2005] flex items-end md:items-center justify-center p-0 md:p-10 pointer-events-none">
+              <motion.div 
+                initial={{ y: '100%', opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: '100%', opacity: 0 }}
+                className="bg-white w-full h-[85vh] md:max-h-[90vh] rounded-t-[4rem] md:rounded-[3.5rem] shadow-[0_50px_100px_rgba(0,0,0,0.3)] overflow-y-auto scrollbar-hide flex flex-col pointer-events-auto relative mb-24 md:mb-0"
+              >
+                <div className="absolute top-6 right-6 flex gap-3 z-[3000]">
+                  {selectedMarker.ownerId === user.uid && !isEditingMarker && (
+                    <button 
+                      type="button"
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        setIsEditingMarker(true); 
+                        setMarkerCategory(selectedMarker.category); 
+                        setCustomCategoryInput(''); 
+                        setNewReviewRating(selectedMarker.rating || 5); 
+                        setNewMarkerTags(selectedMarker.tags || []);
+                        const defaultLinks = selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : []);
+                        setNewMarkerLinks(defaultLinks);
+                        const defaultImages = selectedMarker.imageUrls || (selectedMarker.imageUrl ? [selectedMarker.imageUrl] : []);
+                        setExistingImageUrls(defaultImages);
+                        setNewMarkerFiles([]);
+                        setNewMarkerLinkInput('');
+                      }} 
+                      className="w-12 h-12 bg-black rounded-full flex items-center justify-center text-white shadow-2xl hover:bg-gray-800 active:scale-90 transition-all pointer-events-auto"
+                    >
+                      <Pencil className="w-5 h-5" />
+                    </button>
+                  )}
+                  {selectedMarker.ownerId === user.uid && !isEditingMarker && (
+                    <button 
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteMarker(selectedMarker.id!); }} 
+                      className="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center text-white shadow-2xl hover:bg-red-600 active:scale-90 transition-all pointer-events-auto"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  )}
+                  <button 
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setSelectedMarker(null); setIsEditingMarker(false); }} 
+                    className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-black border-2 border-gray-100 shadow-2xl hover:bg-gray-50 active:scale-90 transition-all pointer-events-auto"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                
+                {isEditingMarker ? (
+                  <form onSubmit={handleUpdateMarker} className="flex flex-col">
+                    <div className="p-4 bg-black text-white shrink-0">
+                      <h2 className="text-xl font-black tracking-tighter mb-1 italic">EDIT VIBE</h2>
+                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Update your discovery</p>
+                    </div>
+                    
+                    <div className="p-4 space-y-4 text-black flex-1">
+                      <div className="space-y-4">
+                        <input name="name" defaultValue={selectedMarker.name} required className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm font-bold outline-none" />
+                        
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-300 uppercase tracking-widest block">Category</label>
+                          <div className="flex flex-wrap gap-2 items-center">
+                            {Array.from(new Set(['restaurant', 'shopping', 'doctor', 'pet friendly', 'cafe', 'bar', 'hotel', 'sightseeing', 'home product', ...customCategories.map(c => c.toLowerCase()), 'other'])).map(cat => (
+                              <div key={cat} className="relative group/cat">
+                                <button 
+                                  type="button" 
+                                  onClick={() => setMarkerCategory(cat)}
+                                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${markerCategory === cat ? 'bg-black text-white' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}
+                                >
+                                  <div className="w-4 h-4 flex items-center justify-center scale-75">{getCategoryIcon(cat)}</div> {cat}
+                                </button>
+                                {customCategories.map(c => c.toLowerCase()).includes(cat) && (
+                                  <button 
+                                     type="button"
+                                     onClick={(e) => handleRemoveCustomCategory(e, cat)}
+                                     className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 rounded-full text-white shadow-md flex items-center justify-center opacity-0 group-hover/cat:opacity-100 transition-opacity"
+                                  >
+                                    <X className="w-3 h-3"/>
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                            <div className="flex gap-2 shrink-0">
+                              <input 
+                                 value={customCategoryInput} 
+                                 onChange={e => setCustomCategoryInput(e.target.value)} 
+                                 placeholder="Custom..."
+                                 className="w-24 bg-gray-50 border-none rounded-xl px-3 py-2 text-[10px] uppercase font-black outline-none tracking-widest"
+                                 onKeyDown={(e) => {
+                                   if (e.key === 'Enter') {
+                                     e.preventDefault();
+                                     if (customCategoryInput.trim()) {
+                                       handleAddCustomCategory(customCategoryInput); setMarkerCategory(customCategoryInput.trim()); setCustomCategoryInput('');
+                                     }
+                                   }
+                                 }}
+                              />
+                              <button 
+                                 type="button" 
+                                 onClick={() => { if (customCategoryInput.trim()) { handleAddCustomCategory(customCategoryInput); setMarkerCategory(customCategoryInput.trim()); setCustomCategoryInput(''); } }}
+                                 className="bg-black text-white px-3 rounded-xl flex items-center justify-center transition-transform active:scale-95"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-2">
+                          <span className="text-[10px] font-black text-gray-300 uppercase tracking-widest mr-2">Rating</span>
+                          <div className="flex items-center gap-2">
+                            {[1,2,3,4,5].map(star => (
+                               <button key={star} type="button" onClick={() => setNewReviewRating(star)}>
+                                 <Star className={`w-5 h-5 ${star <= newReviewRating ? 'fill-yellow-400 stroke-yellow-400' : 'text-gray-200'}`} />
+                               </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        <textarea name="description" defaultValue={selectedMarker.description} placeholder="Notes..." className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm font-bold outline-none h-24 resize-none" />
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                           {newMarkerLinks.map((link, idx) => (
+                             <div key={idx} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-1.5 group">
+                               <ExternalLink className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                               <a href={link} target="_blank" rel="noreferrer" className="flex-1 text-[10px] font-bold text-blue-500 truncate">{link}</a>
+                               <button type="button" onClick={() => setNewMarkerLinks(newMarkerLinks.filter((_, i) => i !== idx))} className="text-gray-300 hover:text-red-500">
+                                 <X className="w-3 h-3" />
+                               </button>
+                             </div>
+                           ))}
+                           <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-1.5 focus-within:ring-2 ring-black/5 ring-transparent">
+                             <ExternalLink className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                             <input 
+                               value={newMarkerLinkInput}
+                               onChange={e => setNewMarkerLinkInput(e.target.value)}
+                               onKeyDown={e => {
+                                 if (e.key === 'Enter') {
+                                   e.preventDefault();
+                                   if (newMarkerLinkInput.trim()) {
+                                     setNewMarkerLinks([...newMarkerLinks, newMarkerLinkInput.trim()]);
+                                     setNewMarkerLinkInput('');
+                                   }
+                                 }
+                               }}
+                               placeholder="Add Web Link & press Enter..." 
+                               className="bg-transparent border-none w-full p-1.5 text-[10px] font-bold outline-none" 
+                             />
+                             <button 
+                               type="button"
+                               onClick={() => {
+                                 if (newMarkerLinkInput.trim()) {
+                                   setNewMarkerLinks([...newMarkerLinks, newMarkerLinkInput.trim()]);
+                                   setNewMarkerLinkInput('');
+                                 }
+                               }}
+                               className="text-gray-400 hover:text-black shrink-0"
+                             >
+                               <Plus className="w-4 h-4" />
+                             </button>
+                           </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap gap-2">
+                            {existingImageUrls.map((url, idx) => (
+                              <div key={`exist-${idx}`} className="relative w-16 h-16 rounded-xl overflow-hidden group border border-gray-100">
+                                 <img src={url} alt="" className="w-full h-full object-cover" />
+                                 <button type="button" onClick={() => setExistingImageUrls(existingImageUrls.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                   <X className="w-2 h-2" />
+                                 </button>
+                              </div>
+                            ))}
+                            {newMarkerFiles.map((file, idx) => (
+                              <div key={`new-${idx}`} className="relative w-16 h-16 rounded-xl overflow-hidden group border border-gray-100">
+                                 <img src={URL.createObjectURL(file)} alt="" className="w-full h-full object-cover" />
+                                 <button type="button" onClick={() => setNewMarkerFiles(newMarkerFiles.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                   <X className="w-2 h-2" />
+                                 </button>
+                              </div>
+                            ))}
+                            <label className="w-16 h-16 rounded-xl flex items-center justify-center bg-gray-50 text-gray-400 hover:bg-gray-100 hover:text-black cursor-pointer border-2 border-dashed border-gray-200 transition-colors">
+                               <Camera className="w-5 h-5" />
+                               <input 
+                                 type="file" 
+                                 multiple 
+                                 accept="image/*" 
+                                 className="hidden" 
+                                 onChange={(e) => {
+                                   if (e.target.files) {
+                                     setNewMarkerFiles([...newMarkerFiles, ...Array.from(e.target.files)]);
+                                   }
+                                 }} 
+                               />
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-6 bg-white border-t border-gray-50 flex gap-3 shrink-0">
+                      <button type="button" onClick={() => setIsEditingMarker(false)} className="flex-1 py-4 text-[10px] font-black text-gray-300 hover:text-black uppercase tracking-[0.2em] bg-gray-50 rounded-2xl">Cancel</button>
+                      <button type="submit" disabled={isUploading} className="flex-[2] bg-black text-white py-4 rounded-2xl font-black shadow-xl uppercase tracking-[0.2em] text-[10px] disabled:opacity-50">
+                        {isUploading ? 'Uploading...' : 'Save'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <div className="h-56 lg:h-64 bg-gray-900 overflow-hidden relative shrink-0">
+                      {(() => {
+                        const displayImages = selectedMarker.imageUrls || (selectedMarker.imageUrl ? [selectedMarker.imageUrl] : []);
+                        if (displayImages.length > 0) {
+                          return (
+                            <div className="flex h-full gap-0.5">
+                              <div className={`h-full relative ${displayImages.length > 1 ? 'w-2/3' : 'w-full'}`}>
+                                <img src={displayImages[0]} alt={selectedMarker.name} className="w-full h-full object-cover opacity-90" />
+                              </div>
+                              {displayImages.length > 1 && (
+                                <div className="flex flex-col gap-0.5 w-1/3">
+                                   <img src={displayImages[1]} alt="" className="w-full h-1/2 object-cover opacity-90" />
+                                   {displayImages.length > 2 && (
+                                     <div className="w-full h-1/2 relative bg-black/20">
+                                       <img src={displayImages[2]} alt="" className="w-full h-full object-cover opacity-90" />
+                                       {displayImages.length > 3 && (
+                                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold text-xl backdrop-blur-[2px]">
+                                           +{displayImages.length - 3}
+                                         </div>
+                                       )}
+                                     </div>
+                                   )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        } else {
+                          return (
+                            <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-800 to-black p-6 text-center">
+                              <div className="w-20 h-20 bg-white/10 backdrop-blur-2xl rounded-2xl flex items-center justify-center mb-4 text-white">
+                                <div className="scale-[2.5]">
+                                  {getCategoryIcon(selectedMarker.category)}
+                                </div>
+                              </div>
+                              <h2 className="text-3xl font-black text-white tracking-tighter italic">{selectedMarker.name}</h2>
+                            </div>
+                          );
+                        }
+                      })()}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-60" />
+                      <div className="absolute bottom-6 left-6 text-white">
+                         <h2 className="text-2xl font-black tracking-tighter leading-none mb-1">{selectedMarker.name}</h2>
+                         <p className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-300">{selectedMarker.category}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 p-6 text-black space-y-6">
+                       <div>
+                          <p className="text-gray-400 text-sm font-medium leading-relaxed italic border-l-4 border-gray-100 pl-4">"{selectedMarker.description}"</p>
+                       </div>
+                       
+                       <div className="grid grid-cols-2 gap-4">
+                          {selectedMarker.priceInfo && (
+                            <div className="bg-green-50/50 p-6 rounded-[2rem] border border-green-100">
+                               <p className="text-[10px] font-bold text-green-600 uppercase mb-2">Budgeting</p>
+                               <p className="text-lg font-black text-green-700">{selectedMarker.priceInfo}</p>
+                            </div>
+                          )}
+                          <div className="bg-gray-50 p-6 rounded-[2rem] border border-gray-100">
+                             <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Editor's Score</p>
+                             <p className="text-lg font-black flex items-center gap-2">
+                               {selectedMarker.rating ? selectedMarker.rating.toFixed(1) : 'N/A'}
+                               <Star className="w-4 h-4 fill-yellow-400 stroke-yellow-400" />
+                             </p>
+                          </div>
+                       </div>
+
+                       {selectedMarker.tags && selectedMarker.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                             {selectedMarker.tags.map((tag, idx) => (
+                               <span key={idx} className="bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest">
+                                 {tag}
+                               </span>
+                             ))}
+                          </div>
+                       )}
+
+                       <div className="flex gap-2 mb-10 overflow-x-auto pb-2 scrollbar-hide">
+                          <button 
+                            onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${selectedMarker.lat},${selectedMarker.lng}`)}
+                            className="bg-blue-50 text-blue-600 px-6 py-4 rounded-2xl border border-blue-100 flex items-center gap-2 shrink-0 transition-all hover:bg-blue-100"
+                          >
+                             <MapPin className="w-4 h-4" />
+                             <span className="text-[10px] font-black uppercase tracking-widest">Google Map</span>
+                          </button>
+                          
+                          {(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : [])).map((link, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => window.open(link)}
+                              className="bg-gray-50 text-gray-600 px-6 py-4 rounded-2xl border border-gray-100 flex items-center gap-2 shrink-0 transition-all hover:bg-gray-100 max-w-[200px]"
+                            >
+                               <ExternalLink className="w-4 h-4 shrink-0" />
+                               <span className="text-[10px] font-black uppercase tracking-widest truncate" title={link}>Link {idx + 1}</span>
+                            </button>
+                          ))}
+                       </div>
+
+                       <div className="space-y-6">
+                          <div className="flex items-center justify-between">
+                             <p className="text-[11px] font-black text-gray-300 uppercase tracking-widest italic">Social Loop</p>
+                             <p className="text-[10px] font-bold text-gray-400">{reviews.length} Comments</p>
+                          </div>
+
+                          {/* Leave a Review */}
+                          <form onSubmit={handleAddReview} className="p-2 border border-gray-100 rounded-[2rem] bg-gray-50 flex flex-col gap-2">
+                             <textarea 
+                               value={newReviewText}
+                               onChange={(e) => setNewReviewText(e.target.value)}
+                               placeholder="Drop a tip for the tribe..." 
+                               className="bg-transparent w-full p-4 text-xs font-bold outline-none resize-none h-20"
+                             />
+                             <div className="flex items-center justify-between px-4 pb-2">
+                                <div className="flex gap-1">
+                                   {[1,2,3,4,5].map(star => (
+                                     <button key={star} type="button" onClick={() => setNewReviewRating(star)}>
+                                       <Star className={`w-4 h-4 ${star <= newReviewRating ? 'fill-yellow-400 stroke-yellow-400' : 'text-gray-200'}`} />
+                                     </button>
+                                   ))}
+                                </div>
+                                <button type="submit" className="bg-black text-white px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all">Submit</button>
+                             </div>
+                          </form>
+
+                          {/* Review List */}
+                          <div className="space-y-4">
+                             {reviews.map(review => (
+                                <div key={review.id} className="p-6 bg-white border border-gray-50 rounded-[2rem] shadow-sm flex items-start gap-4">
+                                   <div className="w-10 h-10 bg-gray-100 rounded-2xl flex items-center justify-center font-black text-[10px] shrink-0">Member</div>
+                                   <div className="flex-1">
+                                      <div className="flex justify-between items-center mb-2">
+                                         <div className="flex gap-0.5">
+                                            {[...Array(5)].map((_, i) => (
+                                              <Star key={i} className={`w-2.5 h-2.5 ${i < review.rating ? 'fill-yellow-400 stroke-yellow-400' : 'text-gray-200'}`} />
+                                            ))}
+                                         </div>
+                                         <p className="text-[8px] font-bold text-gray-300">{new Date(review.createdAt?.toMillis ? review.createdAt.toMillis() : review.createdAt).toLocaleDateString()}</p>
+                                      </div>
+                                      <p className="text-xs font-medium text-gray-600 leading-relaxed">{review.text}</p>
+                                   </div>
+                                </div>
+                             ))}
+                          </div>
+                       </div>
+                    </div>
+
+                    <div className="p-8 lg:p-10 bg-white border-t border-gray-50 flex gap-4 shrink-0 sm:pb-32 lg:pb-10">
+                      {(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : [])).length > 0 && (
+                         <a href={(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : []))[0]} target="_blank" className="flex-1 bg-black text-white py-5 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all text-[10px] tracking-widest uppercase text-center">
+                            Visit {(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : [])).length > 1 ? `(1/${(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : [])).length})` : ''} <ExternalLink className="w-4 h-4" />
+                         </a>
+                      )}
+                      <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedMarker.lat},${selectedMarker.lng}`)} className="flex-1 bg-gray-50 text-black py-5 rounded-2xl font-black shadow-sm active:scale-95 transition-all text-[10px] tracking-widest uppercase">Directions</button>
+                    </div>
+                  </>
+                )}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+    </div>
+  );
+}
+
+export default function App() {
+  if (!hasValidKey) {
+    return (
+      <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontFamily:'sans-serif',backgroundColor:'#fff',padding:20}}>
+        <div style={{textAlign:'center',maxWidth:520}}>
+          <h2 className="text-2xl font-black mb-4">Google Maps API Key Required</h2>
+          <p className="mb-2"><strong>Step 1:</strong> <a className="text-blue-500 underline" href="https://console.cloud.google.com/google/maps-apis/start" target="_blank" rel="noopener">Get an API Key</a></p>
+          <p className="mb-2"><strong>Step 2:</strong> Add your key as a secret in AI Studio:</p>
+          <ul style={{textAlign:'left',lineHeight:'1.8', backgroundColor:'#f9f9f9', padding:20, borderRadius: 10}}>
+            <li>Open <strong>Settings</strong> (⚙️ gear icon, <strong>top-right corner</strong>)</li>
+            <li>Select <strong>Secrets</strong></li>
+            <li>Type <code>GOOGLE_MAPS_PLATFORM_KEY</code> as the secret name, press <strong>Enter</strong></li>
+            <li>Paste your API key as the value, press <strong>Enter</strong></li>
+          </ul>
+          <p className="mt-4 text-sm text-gray-500">The app rebuilds automatically after you add the secret.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <APIProvider apiKey={GOOGLE_MAPS_PLATFORM_KEY} version="weekly">
+      <AppInner />
+    </APIProvider>
+  );
+}

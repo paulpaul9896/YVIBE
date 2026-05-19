@@ -1,0 +1,8 @@
+{
+  "name": "YVIBE",
+  "description": "Social recommendation map for groups to share favorite spots, restaurants, and prices.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}
