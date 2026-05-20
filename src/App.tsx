@@ -12,6 +12,7 @@ import {
   addDoc, 
   getDocs,
   deleteDoc,
+  updateDoc,
   serverTimestamp
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
@@ -692,7 +693,7 @@ function AppInner() {
                   }
                 }}
               >
-                <MapController key="map-control" center={mapCenter} />
+                <MapController center={mapCenter} />
                 
                 {searchResultMarker && (
                   <MapboxMarker key="search-marker" position={{ lat: searchResultMarker.lat, lng: searchResultMarker.lng }}>
@@ -1588,14 +1589,28 @@ export default function App() {
         <div style={{textAlign:'center',maxWidth:520}}>
           <h2 className="text-2xl font-black mb-4">Google Maps API Key Required</h2>
           <p className="mb-2"><strong>Step 1:</strong> <a className="text-blue-500 underline" href="https://console.cloud.google.com/google/maps-apis/start" target="_blank" rel="noopener">Get an API Key</a></p>
-          <p className="mb-2"><strong>Step 2:</strong> Add your key as a secret in AI Studio:</p>
-          <ul style={{textAlign:'left',lineHeight:'1.8', backgroundColor:'#f9f9f9', padding:20, borderRadius: 10}}>
-            <li>Open <strong>Settings</strong> (⚙️ gear icon, <strong>top-right corner</strong>)</li>
-            <li>Select <strong>Secrets</strong></li>
-            <li>Type <code>GOOGLE_MAPS_PLATFORM_KEY</code> as the secret name, press <strong>Enter</strong></li>
-            <li>Paste your API key as the value, press <strong>Enter</strong></li>
-          </ul>
-          <p className="mt-4 text-sm text-gray-500">The app rebuilds automatically after you add the secret.</p>
+          <p className="mb-4"><strong>Step 2:</strong> Add your key as an environment variable or secret.</p>
+          
+          <div className="text-left bg-gray-50 p-5 rounded-2xl mb-4">
+            <h3 className="font-bold mb-2">If you are in AI Studio:</h3>
+            <ul className="list-disc pl-5 space-y-1 text-sm">
+              <li>Open <strong>Settings</strong> (⚙️ gear icon, top-right)</li>
+              <li>Select <strong>Secrets</strong></li>
+              <li>Add a new secret named <code>GOOGLE_MAPS_PLATFORM_KEY</code> and paste your key.</li>
+            </ul>
+          </div>
+          
+          <div className="text-left bg-gray-50 p-5 rounded-2xl">
+            <h3 className="font-bold mb-2">If you are deploying to GitHub Pages:</h3>
+            <ul className="list-disc pl-5 space-y-1 text-sm">
+              <li>Open your GitHub repository</li>
+              <li>Go to <strong>Settings</strong> &gt; <strong>Secrets and variables</strong> &gt; <strong>Actions</strong></li>
+              <li>Click <strong>New repository secret</strong></li>
+              <li>Name it <code>VITE_GOOGLE_MAPS_PLATFORM_KEY</code> and paste your key.</li>
+              <li>Also remember to add your Firebase secrets (e.g. <code>VITE_FIREBASE_API_KEY</code>, etc.) if not already added.</li>
+              <li>Re-run your GitHub Actions deployment.</li>
+            </ul>
+          </div>
         </div>
       </div>
     );
