@@ -306,7 +306,9 @@ function AppInner() {
   const [selectedFilterCategory, setSelectedFilterCategory] = useState<string | null>(null);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [isJoiningGroup, setIsJoiningGroup] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => void} | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => Promise<void>} | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [toastMessage, setToastMessage] = useState<{title: string, message: string, type: 'error' | 'success'} | null>(null);
   const [searchResultMarker, setSearchResultMarker] = useState<{lat: number, lng: number, name: string} | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
 
@@ -325,11 +327,11 @@ function AppInner() {
         },
         (error) => {
           console.error("Error getting location:", error);
-          alert("Unable to find your location. Please check your permissions.");
+          setToastMessage({ title: 'Location Error', message: 'Unable to find your location. Please check your permissions.', type: 'error' });
         }
       );
     } else {
-      alert("Geolocation is not supported by your browser.");
+      setToastMessage({ title: 'Location Error', message: 'Geolocation is not supported by your browser.', type: 'error' });
     }
   };
 
@@ -507,7 +509,7 @@ function AppInner() {
     try {
       uploadedUrls = await uploadFilesToStorage(newMarkerFiles);
     } catch (err) {
-      alert('Failed to upload photos. Please try again.');
+      setToastMessage({ title: 'Upload Failed', message: 'Failed to upload photos. Please try again.', type: 'error' });
       setIsUploading(false);
       return;
     }
@@ -533,9 +535,13 @@ function AppInner() {
       setIsEditingMarker(false);
       setSelectedMarker({ ...selectedMarker, ...updatedData });
       setIsUploading(false);
-    } catch (err) {
+    } catch (err: any) {
       setIsUploading(false);
-      handleFirestoreError(err, OperationType.UPDATE, `groups/${selectedGroup.id}/markers/${selectedMarker.id}`);
+      try {
+        handleFirestoreError(err, OperationType.UPDATE, `groups/${selectedGroup.id}/markers/${selectedMarker.id}`);
+      } catch (e: any) {
+        setToastMessage({ title: 'Update Failed', message: e.message, type: 'error' });
+      }
     }
   };
 
@@ -547,8 +553,13 @@ function AppInner() {
           await deleteDoc(doc(db, 'groups', groupId));
           if (selectedGroup?.id === groupId) setSelectedGroup(null);
           setConfirmDialog(null);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `groups/${groupId}`);
+        } catch (err: any) {
+          try {
+            handleFirestoreError(err, OperationType.DELETE, `groups/${groupId}`);
+          } catch (e: any) {
+            setToastMessage({ title: 'Delete Failed', message: e.message, type: 'error' });
+            setConfirmDialog(null);
+          }
         }
       }
     });
@@ -582,7 +593,7 @@ function AppInner() {
     e.preventDefault();
     if (!user || !isAddingMarker) return;
     if (!selectedGroup || !selectedGroup.id) {
-      alert('Please select or create a group first!');
+      setToastMessage({ title: 'No Group Selected', message: 'Please select or create a group first!', type: 'error' });
       return;
     }
     
@@ -593,7 +604,7 @@ function AppInner() {
     try {
       uploadedUrls = await uploadFilesToStorage(newMarkerFiles);
     } catch (err) {
-      alert('Failed to upload photos. Please try again.');
+      setToastMessage({ title: 'Upload Failed', message: 'Failed to upload photos. Please try again.', type: 'error' });
       setIsUploading(false);
       return;
     }
@@ -624,8 +635,10 @@ function AppInner() {
       try {
         handleFirestoreError(err, OperationType.CREATE, `groups/${selectedGroup.id}/markers`);
       } catch (e: any) {
-        alert('Publish Failed: ' + e.message);
+        setToastMessage({ title: 'Publish Failed', message: e.message, type: 'error' });
       }
+      setIsUploading(false);
+      return;
     }
 
     setIsAddingMarker(null);
@@ -674,6 +687,7 @@ function AppInner() {
       <div className="absolute inset-0">
         <Map
           mapId="54d37c42ca1d0911214f73eb"
+          gestureHandling={'greedy'}
           defaultCenter={{
             lng: 114.1694,
             lat: 22.3193
@@ -738,46 +752,64 @@ function AppInner() {
 
             </div>
 
-        {/* iOS 18 Apple Music Style Bottom Tab Bar */}
+        {/* Bottom Tab Bar (WhatsApp iOS Style) */}
         <div className="fixed bottom-6 left-0 right-0 px-4 md:px-0 md:left-1/2 md:-translate-x-1/2 flex justify-center items-center gap-2 pointer-events-none z-[1000] pb-[env(safe-area-inset-bottom)]">
           {/* Main Navigation Pill */}
-          <nav className="pointer-events-auto bg-white/85 backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-black/5 flex justify-around items-center px-4 py-3 rounded-full flex-1 max-w-[320px]">
-            <button onClick={() => setActiveSheet('none')} className={`flex flex-col items-center justify-center gap-1 w-12 transition-colors ${activeSheet === 'none' ? 'text-[#FA233A]' : 'text-gray-400'}`}>
-              <MapPin className={`w-[22px] h-[22px] ${activeSheet === 'none' ? 'fill-[#FA233A] stroke-[#FA233A]' : 'stroke-[1.5]'}`} />
-              <span className="text-[9px] font-bold tracking-tight">Map</span>
-            </button>
-            <button onClick={() => setActiveSheet('communities')} className={`flex flex-col items-center justify-center gap-1 w-12 transition-colors ${activeSheet === 'communities' ? 'text-[#FA233A]' : 'text-gray-400'}`}>
-              <Users className={`w-[22px] h-[22px] ${activeSheet === 'communities' ? 'fill-[#FA233A] stroke-[#FA233A]' : 'stroke-[1.5]'}`} />
-              <span className="text-[9px] font-bold tracking-tight">Tribes</span>
-            </button>
-            <button onClick={() => setActiveSheet('discover')} className={`flex flex-col items-center justify-center gap-1 w-12 transition-colors ${activeSheet === 'discover' ? 'text-[#FA233A]' : 'text-gray-400'}`}>
-              <Compass className={`w-[22px] h-[22px] ${activeSheet === 'discover' ? 'fill-[#FA233A] stroke-[#FA233A]' : 'stroke-[1.5]'}`} />
-              <span className="text-[9px] font-bold tracking-tight">Discover</span>
-            </button>
-            <button onClick={() => setActiveSheet('settings')} className={`flex flex-col items-center justify-center gap-1 w-12 transition-colors ${activeSheet === 'settings' ? 'text-[#FA233A]' : 'text-gray-400'}`}>
-              <div className={`w-6 h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${activeSheet === 'settings' ? 'border-[#FA233A]' : 'border-transparent'}`}>
-                 <img src={user.photoURL || ''} alt="" className="w-full h-full object-cover" />
-              </div>
-              <span className="text-[9px] font-bold tracking-tight">You</span>
-            </button>
+          <nav className="relative pointer-events-auto bg-white/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/50 flex justify-around items-center px-2 py-1 rounded-[2.5rem] flex-1 max-w-[340px]">
+            {[
+              { id: 'none', label: 'Map', icon: MapPin },
+              { id: 'communities', label: 'Tribes', icon: Users },
+              { id: 'discover', label: 'Discover', icon: Compass },
+              { id: 'settings', label: 'You', icon: null }
+            ].map(tab => {
+              const isActive = activeSheet === tab.id;
+              const Icon = tab.icon;
+              return (
+                <button 
+                  key={tab.id}
+                  onClick={() => setActiveSheet(tab.id as any)} 
+                  className={`relative flex flex-col items-center justify-center gap-1 w-[4.5rem] py-3 transition-colors z-10 ${isActive ? 'text-black' : 'text-gray-500 hover:text-black'}`}
+                >
+                  {isActive && (
+                    <motion.div
+                      layoutId="nav-indicator"
+                      className="absolute inset-0 bg-white/50 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.05)] rounded-[2rem] -z-10 border border-white/60"
+                      transition={{ type: "spring", bounce: 0.25, duration: 0.5 }}
+                    />
+                  )}
+                  {Icon ? (
+                    <Icon className={`w-6 h-6 ${isActive ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
+                  ) : (
+                    <div className={`w-6 h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${isActive ? 'border-black' : 'border-transparent'}`}>
+                       <img src={user.photoURL || ''} alt="" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                  <span className="text-[10px] font-bold tracking-tight">{tab.label}</span>
+                </button>
+              );
+            })}
           </nav>
           
           {/* Locate Button Circle */}
           <button 
             onClick={handleLocateMe}
-            className={`pointer-events-auto bg-white/85 backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-black/5 rounded-full w-[4.25rem] h-[4.25rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 text-gray-400 hover:text-black active:scale-95`}
+            className={`pointer-events-auto bg-white/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/50 rounded-full w-[3.5rem] h-[3.5rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 text-gray-500 hover:text-black active:scale-95`}
           >
-            <LocateFixed className="w-[22px] h-[22px] stroke-[1.5]" />
-            <span className="text-[9px] font-bold tracking-tight">Locate</span>
+            <LocateFixed className="w-5 h-5 stroke-[1.5px]" />
           </button>
 
           {/* Search Button Circle */}
           <button 
             onClick={() => setIsSearchExpanded(true)}
-            className={`pointer-events-auto bg-white/85 backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.12)] border border-black/5 rounded-full w-[4.25rem] h-[4.25rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 active:scale-95 ${isSearchExpanded ? 'text-[#FA233A]' : 'text-gray-400 hover:text-black'}`}
+            className={`pointer-events-auto bg-white/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/50 rounded-full w-[3.5rem] h-[3.5rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 active:scale-95 ${isSearchExpanded ? 'text-black' : 'text-gray-500 hover:text-black'}`}
           >
-            <Search className={`w-[22px] h-[22px] ${isSearchExpanded ? 'stroke-[#FA233A]' : 'stroke-[1.5]'}`} />
-            <span className="text-[9px] font-bold tracking-tight">Search</span>
+            {isSearchExpanded && (
+              <motion.div
+                layoutId="search-indicator"
+                className="absolute inset-0 bg-white/50 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.05)] rounded-full -z-10 border border-white/60"
+              />
+            )}
+            <Search className={`w-5 h-5 z-10 ${isSearchExpanded ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
           </button>
         </div>
 
@@ -870,23 +902,28 @@ function AppInner() {
                           <button onClick={() => { setSelectedFilterCategory(null); setActiveSheet('none'); }} className="text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600">Clear</button>
                         )}
                       </div>
-                      <div className="space-y-2">
-                        {['Restaurant', 'Shopping', 'Doctor', 'Pet Friendly', 'Cafe', 'Bar', 'Hotel', 'Sightseeing', 'Home Product', ...customCategories].map(cat => (
-                          <button 
-                            key={cat} 
-                            className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${
-                              selectedFilterCategory?.toLowerCase() === cat.toLowerCase() ? 'bg-blue-50 border border-blue-100' : 'hover:bg-gray-50 border border-transparent'
-                            }`}
-                            onClick={() => {
-                              setSelectedFilterCategory(cat);
-                              setActiveSheet('none');
-                            }}>
-                            <span className="text-sm font-bold text-gray-700 flex items-center gap-3">
-                              {getCategoryIcon(cat.toLowerCase())} {cat}
-                            </span>
-                            {selectedFilterCategory?.toLowerCase() === cat.toLowerCase() && <div className="w-2 h-2 bg-blue-500 rounded-full" />}
-                          </button>
-                        ))}
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3 pb-6 pt-2">
+                        {['Restaurant', 'Shopping', 'Doctor', 'Pet Friendly', 'Cafe', 'Bar', 'Hotel', 'Sightseeing', 'Home Product', ...customCategories].map(cat => {
+                          const isSelected = selectedFilterCategory?.toLowerCase() === cat.toLowerCase();
+                          return (
+                            <button 
+                              key={cat} 
+                              className={`flex flex-col items-center gap-3 p-5 rounded-3xl min-w-0 border transition-all ${
+                                isSelected ? 'bg-black text-white border-black shadow-xl scale-[1.02]' : 'bg-gray-50 text-gray-700 hover:bg-gray-100 border-transparent'
+                              }`}
+                              onClick={() => {
+                                setSelectedFilterCategory(cat);
+                                setActiveSheet('none');
+                              }}>
+                              <div className="text-3xl">
+                                {getCategoryIcon(cat.toLowerCase())}
+                              </div>
+                              <span className="text-[10px] font-black tracking-widest uppercase text-center leading-tight">
+                                {cat}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -965,17 +1002,60 @@ function AppInner() {
             <motion.div key="confirm-dialog" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 backdrop-blur-xl z-[3000] flex items-center justify-center p-6">
               <motion.div 
                 initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }}
-                className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-sm text-center"
+                className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-sm text-center relative overflow-hidden"
               >
                 <h2 className="text-2xl font-black mb-6 italic text-red-500">PLEASE CONFIRM</h2>
                 <p className="text-sm font-bold text-gray-600 mb-8 leading-relaxed max-w-[200px] mx-auto">{confirmDialog.message}</p>
                 <div className="flex gap-4">
-                  <button type="button" onClick={() => setConfirmDialog(null)} className="flex-1 py-5 text-sm font-black text-gray-300 hover:text-black uppercase tracking-widest">Cancel</button>
-                  <button onClick={confirmDialog.onConfirm} className="flex-2 bg-red-500 text-white py-5 px-8 rounded-2xl font-black shadow-xl uppercase tracking-widest text-sm">Delete</button>
+                  <button type="button" disabled={isConfirming} onClick={() => setConfirmDialog(null)} className="flex-1 py-5 text-sm font-black text-gray-300 hover:text-black uppercase tracking-widest disabled:opacity-50 transition-colors">Cancel</button>
+                  <button 
+                    disabled={isConfirming}
+                    onClick={async () => {
+                      setIsConfirming(true);
+                      try {
+                        await confirmDialog.onConfirm();
+                      } catch (err: any) {
+                        setToastMessage({ title: 'Error', message: err.message || 'Operation failed', type: 'error' });
+                        setConfirmDialog(null);
+                      } finally {
+                        setIsConfirming(false);
+                      }
+                    }} 
+                    className="flex-2 bg-red-500 hover:bg-red-600 active:scale-95 text-white py-5 px-8 rounded-2xl font-black shadow-xl uppercase tracking-widest text-sm disabled:opacity-50 disabled:active:scale-100 transition-all flex items-center justify-center gap-2"
+                  >
+                    {isConfirming ? (
+                      <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full" />
+                    ) : 'Delete'}
+                  </button>
                 </div>
               </motion.div>
             </motion.div>
           )}
+
+          <AnimatePresence>
+            {toastMessage && (
+              <motion.div
+                key="toast"
+                initial={{ opacity: 0, y: -50, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -50, scale: 0.9 }}
+                className="fixed top-6 left-1/2 -translate-x-1/2 z-[4000] max-w-sm w-[calc(100%-2rem)]"
+              >
+                <div className={`p-5 rounded-[2rem] shadow-2xl flex items-start gap-4 border ${toastMessage.type === 'error' ? 'bg-red-50 border-red-100 text-red-900' : 'bg-green-50 border-green-100 text-green-900'}`}>
+                   <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${toastMessage.type === 'error' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                     {toastMessage.type === 'error' ? <X className="w-5 h-5" /> : <div className="w-3 h-3 bg-green-500 rounded-full" />}
+                   </div>
+                   <div className="flex-1 pt-1">
+                     <p className="text-[10px] font-black uppercase tracking-widest mb-1">{toastMessage.title}</p>
+                     <p className="text-sm font-medium opacity-80 leading-snug">{toastMessage.message}</p>
+                   </div>
+                   <button onClick={() => setToastMessage(null)} className="p-2 opacity-50 hover:opacity-100 transition-opacity">
+                     <X className="w-4 h-4" />
+                   </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {isAddingMarker && (
             <div key="add-marker" className="fixed inset-0 lg:absolute lg:inset-y-0 lg:right-0 lg:left-auto lg:w-[340px] z-[2005] flex items-center justify-center p-6 lg:p-8 pointer-events-none">
@@ -1207,7 +1287,13 @@ function AppInner() {
           )}
 
           {selectedMarker && !isAddingMarker && (
-            <div key="selected-marker" className="fixed inset-0 md:absolute md:inset-y-0 md:right-0 md:left-auto md:w-[500px] z-[2005] flex items-end md:items-center justify-center p-0 md:p-10 pointer-events-none">
+            <motion.div 
+              key="selected-marker" 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 md:absolute md:inset-y-0 md:right-0 md:left-auto md:w-[500px] z-[2005] flex items-end md:items-center justify-center p-0 md:p-10 pointer-events-none"
+            >
               <motion.div 
                 initial={{ y: '100%', opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: '100%', opacity: 0 }}
                 className="bg-white w-full h-[85vh] md:max-h-[90vh] rounded-t-[4rem] md:rounded-[3.5rem] shadow-[0_50px_100px_rgba(0,0,0,0.3)] overflow-y-auto scrollbar-hide flex flex-col pointer-events-auto relative mb-24 md:mb-0"
@@ -1575,7 +1661,7 @@ function AppInner() {
                   </>
                 )}
               </motion.div>
-            </div>
+            </motion.div>
           )}
         </AnimatePresence>
     </div>
