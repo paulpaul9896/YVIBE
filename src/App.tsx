@@ -51,7 +51,7 @@ import {
   Compass
 } from 'lucide-react';
 import { Group, Marker as LociMarker, Review } from './types';
-import { APIProvider, Map, AdvancedMarker as MapboxMarker, Pin, useMap, useMapsLibrary, ControlPosition } from '@vis.gl/react-google-maps';
+import { APIProvider, Map, AdvancedMarker as MapboxMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import PlaceAutocomplete from './components/PlaceAutocomplete';
 import ClusteredMarkers from './components/ClusteredMarkers';
 
@@ -687,19 +687,22 @@ function AppInner() {
       <div className="absolute inset-0">
         <Map
           mapId="54d37c42ca1d0911214f73eb"
-          gestureHandling={'greedy'}
           defaultCenter={{
             lng: 114.1694,
             lat: 22.3193
           }}
-                defaultZoom={12}
-                zoomControl={true}
-                zoomControlOptions={{ position: ControlPosition.RIGHT_BOTTOM }}
-                mapTypeControl={false}
-                streetViewControl={false}
-                internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                style={{width: '100%', height: '100%'}}
-                onClick={(e) => {
+          defaultZoom={12}
+          gestureHandling={'greedy'}
+          disableDefaultUI={true}
+          zoomControl={false}
+          mapTypeControl={false}
+          scaleControl={false}
+          streetViewControl={false}
+          rotateControl={false}
+          fullscreenControl={false}
+          internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+          style={{width: '100%', height: '100%'}}
+          onClick={(e) => {
                   if (e.detail.latLng) {
                     const lat = typeof e.detail.latLng.lat === 'function' ? e.detail.latLng.lat() : e.detail.latLng.lat;
                     const lng = typeof e.detail.latLng.lng === 'function' ? e.detail.latLng.lng() : e.detail.latLng.lng;
@@ -753,9 +756,9 @@ function AppInner() {
             </div>
 
         {/* Bottom Tab Bar (WhatsApp iOS Style) */}
-        <div className="fixed bottom-6 left-0 right-0 px-4 md:px-0 md:left-1/2 md:-translate-x-1/2 flex justify-center items-center gap-2 pointer-events-none z-[1000] pb-[env(safe-area-inset-bottom)]">
+        <div className="fixed bottom-6 w-full px-2 md:px-0 md:left-1/2 md:-translate-x-1/2 md:w-auto flex justify-center items-center gap-1.5 md:gap-2 pointer-events-none z-[1000] pb-[env(safe-area-inset-bottom)]">
           {/* Main Navigation Pill */}
-          <nav className="relative pointer-events-auto bg-white/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/50 flex justify-around items-center px-2 py-1 rounded-[2.5rem] flex-1 max-w-[340px]">
+          <nav className="relative pointer-events-auto bg-white/50 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/60 flex justify-around items-center px-1 py-1 rounded-[2.5rem] flex-1 max-w-[280px] md:max-w-[340px]">
             {[
               { id: 'none', label: 'Map', icon: MapPin },
               { id: 'communities', label: 'Tribes', icon: Users },
@@ -768,7 +771,7 @@ function AppInner() {
                 <button 
                   key={tab.id}
                   onClick={() => setActiveSheet(tab.id as any)} 
-                  className={`relative flex flex-col items-center justify-center gap-1 w-[4.5rem] py-3 transition-colors z-10 ${isActive ? 'text-black' : 'text-gray-500 hover:text-black'}`}
+                  className={`relative flex flex-col items-center justify-center gap-1 w-[3.5rem] md:w-[4.5rem] py-2.5 md:py-3 transition-colors z-10 ${isActive ? 'text-black' : 'text-gray-500 hover:text-black'}`}
                 >
                   {isActive && (
                     <motion.div
@@ -778,13 +781,13 @@ function AppInner() {
                     />
                   )}
                   {Icon ? (
-                    <Icon className={`w-6 h-6 ${isActive ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
+                    <Icon className={`w-5 h-5 md:w-6 md:h-6 ${isActive ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
                   ) : (
-                    <div className={`w-6 h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${isActive ? 'border-black' : 'border-transparent'}`}>
+                    <div className={`w-5 h-5 md:w-6 md:h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${isActive ? 'border-black' : 'border-transparent'}`}>
                        <img src={user.photoURL || ''} alt="" className="w-full h-full object-cover" />
                     </div>
                   )}
-                  <span className="text-[10px] font-bold tracking-tight">{tab.label}</span>
+                  <span className="text-[9px] md:text-[10px] font-bold tracking-tight">{tab.label}</span>
                 </button>
               );
             })}
@@ -793,15 +796,15 @@ function AppInner() {
           {/* Locate Button Circle */}
           <button 
             onClick={handleLocateMe}
-            className={`pointer-events-auto bg-white/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/50 rounded-full w-[3.5rem] h-[3.5rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 text-gray-500 hover:text-black active:scale-95`}
+            className={`pointer-events-auto bg-white/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/50 rounded-full w-[3rem] h-[3rem] md:w-[3.5rem] md:h-[3.5rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 text-gray-500 hover:text-black active:scale-95`}
           >
-            <LocateFixed className="w-5 h-5 stroke-[1.5px]" />
+            <LocateFixed className="w-4 h-4 md:w-5 md:h-5 stroke-[1.5px]" />
           </button>
 
           {/* Search Button Circle */}
           <button 
             onClick={() => setIsSearchExpanded(true)}
-            className={`pointer-events-auto bg-white/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/50 rounded-full w-[3.5rem] h-[3.5rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 active:scale-95 ${isSearchExpanded ? 'text-black' : 'text-gray-500 hover:text-black'}`}
+            className={`pointer-events-auto bg-white/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/50 rounded-full w-[3rem] h-[3rem] md:w-[3.5rem] md:h-[3.5rem] flex flex-col items-center justify-center gap-1 transition-colors shrink-0 active:scale-95 ${isSearchExpanded ? 'text-black' : 'text-gray-500 hover:text-black'}`}
           >
             {isSearchExpanded && (
               <motion.div
@@ -809,49 +812,47 @@ function AppInner() {
                 className="absolute inset-0 bg-white/50 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.05)] rounded-full -z-10 border border-white/60"
               />
             )}
-            <Search className={`w-5 h-5 z-10 ${isSearchExpanded ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
+            <Search className={`w-4 h-4 md:w-5 md:h-5 z-10 ${isSearchExpanded ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
           </button>
         </div>
 
         {/* Panels & Overlays */}
         <AnimatePresence>
           {activeSheet !== 'none' && (
-            <>
-              <motion.div 
-                key="sheet-backdrop" 
-                initial={{ opacity: 0 }} 
-                animate={{ opacity: 1 }} 
-                exit={{ opacity: 0 }} 
-                onClick={() => setActiveSheet('none')}
-                className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[2000]"
-              />
+            <motion.div 
+              key="sheet-backdrop" 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => setActiveSheet('none')}
+              className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[2000]"
+            />
+          )}
+          {activeSheet !== 'none' && (
+            <motion.div key="sheet-panel-wrapper" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 flex items-center justify-center p-4 z-[2001] pointer-events-none">
               <motion.div 
                 key="sheet-panel" 
-                initial={{ y: '100%' }} 
-                animate={{ y: 0 }} 
-                exit={{ y: '100%' }} 
-                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="fixed bottom-0 left-0 right-0 w-full bg-white shadow-2xl z-[2001] flex flex-col overflow-hidden rounded-t-[2.5rem] max-h-[85vh] pb-[max(env(safe-area-inset-bottom),1rem)]"
+                initial={{ scale: 0.9, opacity: 0, y: 20 }} 
+                animate={{ scale: 1, opacity: 1, y: 0 }} 
+                exit={{ scale: 0.9, opacity: 0, y: 20 }} 
+                className="w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden rounded-[3rem] max-h-[85vh] pointer-events-auto"
               >
-                <div className="flex justify-center p-4 pb-0">
-                   <div className="w-12 h-1.5 bg-gray-200 rounded-full" />
-                </div>
-                <div className="p-6 pb-2 flex items-center justify-between">
-                  <h2 className="text-2xl font-black italic shrink-0">
-                    {activeSheet === 'communities' ? 'COMMUNITIES' : activeSheet === 'discover' ? 'DISCOVER' : 'SETTINGS'}
-                  </h2>
-                  <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-                    {activeSheet === 'communities' && (
-                      <div className="flex gap-2 shrink-0">
-                          <button onClick={() => { setIsJoiningGroup(true); setActiveSheet('none'); }} className="py-2 px-4 rounded-full border-2 border-gray-100 text-[10px] font-black uppercase tracking-widest hover:border-black transition-colors">Join</button>
-                          <button onClick={() => { setIsCreatingGroup(true); setActiveSheet('none'); }} className="py-2 px-4 rounded-full bg-black text-white text-[10px] font-black uppercase tracking-widest hover:bg-gray-900 transition-colors">Create</button>
-                      </div>
-                    )}
-                    <button onClick={() => setActiveSheet('none')} className="p-2 hover:bg-gray-100 rounded-full transition-colors shrink-0"><X className="w-6 h-6" /></button>
+                  <div className="p-6 md:p-8 pb-4 flex items-center justify-between border-b border-gray-50">
+                    <h2 className="text-2xl font-black italic shrink-0">
+                      {activeSheet === 'communities' ? 'COMMUNITIES' : activeSheet === 'discover' ? 'DISCOVER' : 'SETTINGS'}
+                    </h2>
+                    <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
+                      {activeSheet === 'communities' && (
+                        <div className="flex gap-2 shrink-0">
+                            <button onClick={() => { setIsJoiningGroup(true); setActiveSheet('none'); }} className="py-2 px-4 rounded-full border-2 border-gray-100 text-[10px] font-black uppercase tracking-widest hover:border-black transition-colors">Join</button>
+                            <button onClick={() => { setIsCreatingGroup(true); setActiveSheet('none'); }} className="py-2 px-4 rounded-full bg-black text-white text-[10px] font-black uppercase tracking-widest hover:bg-gray-900 transition-colors">Create</button>
+                        </div>
+                      )}
+                      <button onClick={() => setActiveSheet('none')} className="p-2 hover:bg-gray-100 rounded-full transition-colors shrink-0"><X className="w-6 h-6" /></button>
+                    </div>
                   </div>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto scrollbar-hide p-6 space-y-8">
+                  
+                  <div className="flex-1 overflow-y-auto scrollbar-hide p-6 md:p-8 space-y-8">
                   
                   {activeSheet === 'communities' && (
                     <div>
@@ -961,7 +962,7 @@ function AppInner() {
 
                 </div>
               </motion.div>
-            </>
+            </motion.div>
           )}
 
           {isCreatingGroup && (

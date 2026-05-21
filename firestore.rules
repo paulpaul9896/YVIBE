@@ -17,8 +17,8 @@ service cloud.firestore {
     }
 
     function isGroupMember(groupId, uid) {
-      return exists(/databases/$(database)/documents/groups/$(groupId)/members/$(uid)) || 
-             get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == uid;
+      return get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == uid || 
+             exists(/databases/$(database)/documents/groups/$(groupId)/members/$(uid));
     }
 
     function isValidUser(data) {
@@ -72,13 +72,13 @@ service cloud.firestore {
       }
       
       match /members/{memberId} {
-        allow get: if isSignedIn() && isValidId(groupId) && isValidId(memberId) && isGroupMember(groupId, request.auth.uid);
-        allow list: if isSignedIn() && isValidId(groupId) && isGroupMember(groupId, request.auth.uid);
-        allow create: if isSignedIn() && isValidId(groupId) && isValidId(memberId) && memberId == request.auth.uid && isValidGroupMember(incoming()) && (
+        allow get: if isSignedIn() && isValidId(memberId) && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)));
+        allow list: if isSignedIn() && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)));
+        allow create: if isSignedIn() && isValidId(memberId) && memberId == request.auth.uid && isValidGroupMember(incoming()) && (
           (incoming().role == 'owner' && get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid) ||
           (incoming().role == 'member')
         );
-        allow delete: if isSignedIn() && isValidId(groupId) && isValidId(memberId) && (existing().role != 'owner' || get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId != request.auth.uid) && memberId == request.auth.uid; 
+        allow delete: if isSignedIn() && isValidId(memberId) && (existing().role != 'owner' || get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId != request.auth.uid) && memberId == request.auth.uid; 
       }
 
       function isValidMarker(data) {
@@ -103,11 +103,11 @@ service cloud.firestore {
       }
 
       match /markers/{markerId} {
-        allow get: if isSignedIn() && isValidId(groupId) && isGroupMember(groupId, request.auth.uid);
-        allow list: if isSignedIn() && isValidId(groupId) && isGroupMember(groupId, request.auth.uid);
-        allow create: if isSignedIn() && isValidId(groupId) && isGroupMember(groupId, request.auth.uid) && isValidMarker(incoming());
-        allow update: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isGroupMember(groupId, request.auth.uid) && isValidMarkerUpdate(incoming()) && existing().ownerId == request.auth.uid;
-        allow delete: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isGroupMember(groupId, request.auth.uid) && existing().ownerId == request.auth.uid;
+        allow get: if isSignedIn() && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)));
+        allow list: if isSignedIn() && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)));
+        allow create: if isSignedIn() && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid))) && isValidMarker(incoming());
+        allow update: if isSignedIn() && isValidId(markerId) && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid))) && isValidMarkerUpdate(incoming()) && existing().ownerId == request.auth.uid;
+        allow delete: if isSignedIn() && isValidId(markerId) && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid))) && existing().ownerId == request.auth.uid;
 
         function isValidReview(data) {
           return data.keys().hasAll(['text', 'rating', 'ownerId', 'createdAt']) &&
@@ -125,11 +125,11 @@ service cloud.firestore {
         }
 
         match /reviews/{reviewId} {
-          allow get: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isValidId(reviewId) && isGroupMember(groupId, request.auth.uid);
-          allow list: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isGroupMember(groupId, request.auth.uid);
-          allow create: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isValidId(reviewId) && isGroupMember(groupId, request.auth.uid) && isValidReview(incoming()) && incoming().ownerId == request.auth.uid && exists(/databases/$(database)/documents/groups/$(groupId)/markers/$(markerId));
-          allow update: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isValidId(reviewId) && isGroupMember(groupId, request.auth.uid) && isValidReviewUpdate(incoming()) && existing().ownerId == request.auth.uid && incoming().ownerId == existing().ownerId && incoming().diff(existing()).affectedKeys().hasOnly(['text', 'rating']);
-          allow delete: if isSignedIn() && isValidId(groupId) && isValidId(markerId) && isValidId(reviewId) && isGroupMember(groupId, request.auth.uid) && existing().ownerId == request.auth.uid;
+          allow get: if isSignedIn() && isValidId(reviewId) && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)));
+          allow list: if isSignedIn() && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid)));
+          allow create: if isSignedIn() && isValidId(reviewId) && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid))) && isValidReview(incoming()) && incoming().ownerId == request.auth.uid && exists(/databases/$(database)/documents/groups/$(groupId)/markers/$(markerId));
+          allow update: if isSignedIn() && isValidId(reviewId) && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid))) && isValidReviewUpdate(incoming()) && existing().ownerId == request.auth.uid && incoming().ownerId == existing().ownerId && incoming().diff(existing()).affectedKeys().hasOnly(['text', 'rating']);
+          allow delete: if isSignedIn() && isValidId(reviewId) && (get(/databases/$(database)/documents/groups/$(groupId)).data.ownerId == request.auth.uid || exists(/databases/$(database)/documents/groups/$(groupId)/members/$(request.auth.uid))) && existing().ownerId == request.auth.uid;
         }
       }
     }
