@@ -303,6 +303,7 @@ function AppInner() {
   const [isAddingMarker, setIsAddingMarker] = useState<{lat: number, lng: number} | null>(null);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [activeSheet, setActiveSheet] = useState<'none' | 'communities' | 'discover' | 'settings'>('none');
+  const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [selectedFilterCategory, setSelectedFilterCategory] = useState<string | null>(null);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [isJoiningGroup, setIsJoiningGroup] = useState(false);
@@ -629,7 +630,24 @@ function AppInner() {
 
     try {
       const markersRef = collection(db, 'groups', selectedGroup.id, 'markers');
-      await addDoc(markersRef, markerData);
+      const docRef = await addDoc(markersRef, markerData);
+      
+      const newMarker: LociMarker = {
+        id: docRef.id,
+        ...markerData
+      };
+      
+      setIsAddingMarker(null);
+      setNewReviewRating(5);
+      setIsUploading(false);
+      setNewMarkerFiles([]);
+      setNewMarkerLinks([]);
+      setNewMarkerLinkInput('');
+      setMarkerCategory('other');
+      
+      setSelectedMarker(newMarker);
+      setToastMessage({ title: 'Success', message: 'Vibe published successfully!', type: 'success' });
+      return;
     } catch (err: any) {
       console.error('Publish Error Detail:', err);
       try {
@@ -640,13 +658,6 @@ function AppInner() {
       setIsUploading(false);
       return;
     }
-
-    setIsAddingMarker(null);
-    setNewReviewRating(5);
-    setIsUploading(false);
-    setNewMarkerFiles([]);
-    setNewMarkerLinks([]);
-    setNewMarkerLinkInput('');
   };
 
   if (loading) return (
@@ -758,7 +769,10 @@ function AppInner() {
         {/* Bottom Tab Bar (WhatsApp iOS Style) */}
         <div className="fixed bottom-6 w-full px-2 md:px-0 md:left-1/2 md:-translate-x-1/2 md:w-auto flex justify-center items-center gap-1.5 md:gap-2 pointer-events-none z-[1000] pb-[env(safe-area-inset-bottom)]">
           {/* Main Navigation Pill */}
-          <nav className="relative pointer-events-auto bg-white/50 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/60 flex justify-around items-center px-1 py-1 rounded-[2.5rem] flex-1 max-w-[280px] md:max-w-[340px]">
+          <nav 
+            className="relative pointer-events-auto bg-white/50 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] border border-white/60 flex justify-around items-center px-1 py-1 rounded-[2.5rem] flex-1 max-w-[280px] md:max-w-[340px]"
+            onPointerLeave={() => setHoveredTab(null)}
+          >
             {[
               { id: 'none', label: 'Map', icon: MapPin },
               { id: 'communities', label: 'Tribes', icon: Users },
@@ -766,24 +780,27 @@ function AppInner() {
               { id: 'settings', label: 'You', icon: null }
             ].map(tab => {
               const isActive = activeSheet === tab.id;
+              const isHovered = hoveredTab === tab.id;
               const Icon = tab.icon;
               return (
                 <button 
                   key={tab.id}
                   onClick={() => setActiveSheet(tab.id as any)} 
+                  onPointerEnter={() => setHoveredTab(tab.id)}
+                  onPointerDown={() => setHoveredTab(tab.id)}
                   className={`relative flex flex-col items-center justify-center gap-1 w-[3.5rem] md:w-[4.5rem] py-2.5 md:py-3 transition-colors z-10 ${isActive ? 'text-black' : 'text-gray-500 hover:text-black'}`}
                 >
-                  {isActive && (
+                  {isHovered && (
                     <motion.div
-                      layoutId="nav-indicator"
+                      layoutId="nav-hover-indicator"
                       className="absolute inset-0 bg-white/50 backdrop-blur-md shadow-[0_2px_10px_rgba(0,0,0,0.05)] rounded-[2rem] -z-10 border border-white/60"
-                      transition={{ type: "spring", bounce: 0.25, duration: 0.5 }}
+                      transition={{ type: "spring", bounce: 0.25, duration: 0.4 }}
                     />
                   )}
                   {Icon ? (
-                    <Icon className={`w-5 h-5 md:w-6 md:h-6 ${isActive ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
+                    <Icon className={`w-5 h-5 md:w-6 md:h-6 ${isActive || isHovered ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
                   ) : (
-                    <div className={`w-5 h-5 md:w-6 md:h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${isActive ? 'border-black' : 'border-transparent'}`}>
+                    <div className={`w-5 h-5 md:w-6 md:h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${isActive || isHovered ? 'border-black' : 'border-transparent'}`}>
                        <img src={user.photoURL || ''} alt="" className="w-full h-full object-cover" />
                     </div>
                   )}
