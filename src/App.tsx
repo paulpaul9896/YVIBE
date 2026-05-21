@@ -304,7 +304,7 @@ function AppInner() {
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [activeSheet, setActiveSheet] = useState<'none' | 'communities' | 'discover' | 'settings'>('none');
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
-  const [selectedFilterCategory, setSelectedFilterCategory] = useState<string | null>(null);
+  const [selectedFilterCategories, setSelectedFilterCategories] = useState<string[]>([]);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [isJoiningGroup, setIsJoiningGroup] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => Promise<void>} | null>(null);
@@ -736,7 +736,7 @@ function AppInner() {
                 )}
 
                 <ClusteredMarkers 
-                  markers={selectedFilterCategory ? markers.filter(m => m.category.toLowerCase() === selectedFilterCategory.toLowerCase()) : markers}
+                  markers={selectedFilterCategories.length > 0 ? markers.filter(m => selectedFilterCategories.some(cat => m.category.toLowerCase() === cat.toLowerCase())) : markers}
                   selectedMarker={selectedMarker}
                   onMarkerClick={setSelectedMarker}
                   MarkerHtmlContent={({m, isSelected}) => <MarkerHtmlContent m={m} isSelected={isSelected} />}
@@ -856,7 +856,7 @@ function AppInner() {
               >
                   <div className="p-6 md:p-8 pb-4 flex items-center justify-between border-b border-gray-50">
                     <h2 className="text-2xl font-black italic shrink-0">
-                      {activeSheet === 'communities' ? 'COMMUNITIES' : activeSheet === 'discover' ? 'DISCOVER' : 'SETTINGS'}
+                      {activeSheet === 'communities' ? 'COMMUNITIES' : activeSheet === 'discover' ? 'VIBE' : 'SETTINGS'}
                     </h2>
                     <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
                       {activeSheet === 'communities' && (
@@ -916,27 +916,30 @@ function AppInner() {
                     <div>
                       <div className="flex items-center justify-between mb-4">
                         <p className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em]">Map Filters</p>
-                        {selectedFilterCategory && (
-                          <button onClick={() => { setSelectedFilterCategory(null); setActiveSheet('none'); }} className="text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600">Clear</button>
+                        {selectedFilterCategories.length > 0 && (
+                          <button onClick={() => setSelectedFilterCategories([])} className="text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600">Clear All</button>
                         )}
                       </div>
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3 pb-6 pt-2">
+                      <div className="grid grid-cols-3 gap-2 pb-6 pt-2">
                         {['Restaurant', 'Shopping', 'Doctor', 'Pet Friendly', 'Cafe', 'Bar', 'Hotel', 'Sightseeing', 'Home Product', ...customCategories].map(cat => {
-                          const isSelected = selectedFilterCategory?.toLowerCase() === cat.toLowerCase();
+                          const isSelected = selectedFilterCategories.some(c => c.toLowerCase() === cat.toLowerCase());
                           return (
                             <button 
                               key={cat} 
-                              className={`flex flex-col items-center gap-3 p-5 rounded-3xl min-w-0 border transition-all ${
+                              className={`flex flex-col items-center gap-2 p-3 rounded-2xl w-full border transition-all ${
                                 isSelected ? 'bg-black text-white border-black shadow-xl scale-[1.02]' : 'bg-gray-50 text-gray-700 hover:bg-gray-100 border-transparent'
                               }`}
                               onClick={() => {
-                                setSelectedFilterCategory(cat);
-                                setActiveSheet('none');
+                                setSelectedFilterCategories(prev =>
+                                  prev.some(c => c.toLowerCase() === cat.toLowerCase())
+                                    ? prev.filter(c => c.toLowerCase() !== cat.toLowerCase())
+                                    : [...prev, cat]
+                                );
                               }}>
-                              <div className="text-3xl">
+                              <div className="text-2xl">
                                 {getCategoryIcon(cat.toLowerCase())}
                               </div>
-                              <span className="text-[10px] font-black tracking-widest uppercase text-center leading-tight">
+                              <span className="text-[9px] font-black tracking-wider uppercase text-center leading-tight break-words w-full">
                                 {cat}
                               </span>
                             </button>
