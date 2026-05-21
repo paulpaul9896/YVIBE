@@ -305,6 +305,8 @@ function AppInner() {
   const [activeSheet, setActiveSheet] = useState<'none' | 'communities' | 'discover' | 'settings'>('none');
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [selectedFilterCategories, setSelectedFilterCategories] = useState<string[]>([]);
+  const [selectedFilterTags, setSelectedFilterTags] = useState<string[]>([]);
+  const [vibeFilterMode, setVibeFilterMode] = useState<'category' | 'tags'>('category');
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [isJoiningGroup, setIsJoiningGroup] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => Promise<void>} | null>(null);
@@ -466,10 +468,8 @@ function AppInner() {
         ownerId: user.uid,
         createdAt: serverTimestamp()
       };
-      const currentRating = selectedMarker.rating || 5;
-      const currentReviewCount = selectedMarker.reviewCount || 1;
-      const newReviewCount = currentReviewCount + 1;
-      const newAverageRating = ((currentRating * currentReviewCount) + newReviewRating) / newReviewCount;
+      const newReviewCount = reviews.length + 1;
+      const newAverageRating = (reviews.reduce((sum, r) => sum + r.rating, 0) + newReviewRating) / newReviewCount;
       
       await addDoc(collection(db, 'groups', selectedGroup.id!, 'markers', selectedMarker.id!, 'reviews'), reviewData);
       await updateDoc(doc(db, 'groups', selectedGroup.id!, 'markers', selectedMarker.id!), {
@@ -736,7 +736,11 @@ function AppInner() {
                 )}
 
                 <ClusteredMarkers 
-                  markers={selectedFilterCategories.length > 0 ? markers.filter(m => selectedFilterCategories.some(cat => m.category.toLowerCase() === cat.toLowerCase())) : markers}
+                  markers={markers.filter(m => {
+                    const categoryMatch = selectedFilterCategories.length === 0 || selectedFilterCategories.some(cat => m.category.toLowerCase() === cat.toLowerCase());
+                    const tagMatch = selectedFilterTags.length === 0 || selectedFilterTags.some(tag => (m.tags || []).includes(tag));
+                    return categoryMatch && tagMatch;
+                  })}
                   selectedMarker={selectedMarker}
                   onMarkerClick={setSelectedMarker}
                   MarkerHtmlContent={({m, isSelected}) => <MarkerHtmlContent m={m} isSelected={isSelected} />}
@@ -776,7 +780,7 @@ function AppInner() {
             {[
               { id: 'none', label: 'Map', icon: MapPin },
               { id: 'communities', label: 'Tribes', icon: Users },
-              { id: 'discover', label: 'Discover', icon: Compass },
+              { id: 'discover', label: 'Vibe', icon: Compass },
               { id: 'settings', label: 'You', icon: null }
             ].map(tab => {
               const isActive = activeSheet === tab.id;
@@ -914,38 +918,92 @@ function AppInner() {
 
                   {activeSheet === 'discover' && (
                     <div>
-                      <div className="flex items-center justify-between mb-4">
-                        <p className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em]">Map Filters</p>
-                        {selectedFilterCategories.length > 0 && (
-                          <button onClick={() => setSelectedFilterCategories([])} className="text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600">Clear All</button>
-                        )}
+                      {/* Mode tabs */}
+                      <div className="flex gap-2 mb-5">
+                        <button
+                          onClick={() => setVibeFilterMode('category')}
+                          className={`flex-1 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${vibeFilterMode === 'category' ? 'bg-black text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                        >
+                          Category
+                        </button>
+                        <button
+                          onClick={() => setVibeFilterMode('tags')}
+                          className={`flex-1 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all ${vibeFilterMode === 'tags' ? 'bg-black text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                        >
+                          Tags
+                        </button>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 pb-6 pt-2">
-                        {['Restaurant', 'Shopping', 'Doctor', 'Pet Friendly', 'Cafe', 'Bar', 'Hotel', 'Sightseeing', 'Home Product', ...customCategories].map(cat => {
-                          const isSelected = selectedFilterCategories.some(c => c.toLowerCase() === cat.toLowerCase());
-                          return (
-                            <button 
-                              key={cat} 
-                              className={`flex flex-col items-center gap-2 p-3 rounded-2xl w-full border transition-all ${
-                                isSelected ? 'bg-black text-white border-black shadow-xl scale-[1.02]' : 'bg-gray-50 text-gray-700 hover:bg-gray-100 border-transparent'
-                              }`}
-                              onClick={() => {
-                                setSelectedFilterCategories(prev =>
-                                  prev.some(c => c.toLowerCase() === cat.toLowerCase())
-                                    ? prev.filter(c => c.toLowerCase() !== cat.toLowerCase())
-                                    : [...prev, cat]
-                                );
-                              }}>
-                              <div className="text-2xl">
-                                {getCategoryIcon(cat.toLowerCase())}
+
+                      {/* Category filter */}
+                      {vibeFilterMode === 'category' && (
+                        <div>
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em]">Map Filters</p>
+                            {selectedFilterCategories.length > 0 && (
+                              <button onClick={() => setSelectedFilterCategories([])} className="text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600">Clear All</button>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 pb-6 pt-2">
+                            {['Restaurant', 'Shopping', 'Doctor', 'Pet Friendly', 'Cafe', 'Bar', 'Hotel', 'Sightseeing', 'Home Product', ...customCategories].map(cat => {
+                              const isSelected = selectedFilterCategories.some(c => c.toLowerCase() === cat.toLowerCase());
+                              return (
+                                <button
+                                  key={cat}
+                                  className={`flex flex-col items-center gap-2 p-3 rounded-2xl w-full border transition-all ${
+                                    isSelected ? 'bg-black text-white border-black shadow-xl scale-[1.02]' : 'bg-gray-50 text-gray-700 hover:bg-gray-100 border-transparent'
+                                  }`}
+                                  onClick={() => {
+                                    setSelectedFilterCategories(prev =>
+                                      prev.some(c => c.toLowerCase() === cat.toLowerCase())
+                                        ? prev.filter(c => c.toLowerCase() !== cat.toLowerCase())
+                                        : [...prev, cat]
+                                    );
+                                  }}>
+                                  <div className="text-2xl">{getCategoryIcon(cat.toLowerCase())}</div>
+                                  <span className="text-[9px] font-black tracking-wider uppercase text-center leading-tight break-words w-full">{cat}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Tags filter */}
+                      {vibeFilterMode === 'tags' && (() => {
+                        const allTags = Array.from(new Set(markers.flatMap(m => m.tags || []))).sort();
+                        return (
+                          <div>
+                            <div className="flex items-center justify-between mb-3">
+                              <p className="text-[11px] font-black text-gray-300 uppercase tracking-[0.2em]">Filter by Tag</p>
+                              {selectedFilterTags.length > 0 && (
+                                <button onClick={() => setSelectedFilterTags([])} className="text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-blue-600">Clear All</button>
+                              )}
+                            </div>
+                            {allTags.length === 0 ? (
+                              <p className="text-[11px] text-gray-400 text-center py-8">No tags added to any markers yet.</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-2 pb-6 pt-2">
+                                {allTags.map(tag => {
+                                  const isSelected = selectedFilterTags.includes(tag);
+                                  return (
+                                    <button
+                                      key={tag}
+                                      onClick={() => setSelectedFilterTags(prev =>
+                                        prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+                                      )}
+                                      className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest transition-all border ${
+                                        isSelected ? 'bg-black text-white border-black shadow-lg scale-[1.03]' : 'bg-gray-50 text-gray-700 hover:bg-gray-100 border-transparent'
+                                      }`}
+                                    >
+                                      {tag}
+                                    </button>
+                                  );
+                                })}
                               </div>
-                              <span className="text-[9px] font-black tracking-wider uppercase text-center leading-tight break-words w-full">
-                                {cat}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
                   
@@ -1320,7 +1378,7 @@ function AppInner() {
                 className="bg-white w-full h-[85vh] md:max-h-[90vh] rounded-t-[4rem] md:rounded-[3.5rem] shadow-[0_50px_100px_rgba(0,0,0,0.3)] overflow-y-auto scrollbar-hide flex flex-col pointer-events-auto relative mb-24 md:mb-0"
               >
                 <div className="absolute top-6 right-6 flex gap-3 z-[3000]">
-                  {selectedMarker.ownerId === user.uid && !isEditingMarker && (
+                  {!isEditingMarker && (
                     <button 
                       type="button"
                       onClick={(e) => { 
@@ -1342,7 +1400,7 @@ function AppInner() {
                       <Pencil className="w-5 h-5" />
                     </button>
                   )}
-                  {selectedMarker.ownerId === user.uid && !isEditingMarker && (
+                  {!isEditingMarker && (
                     <button 
                       type="button"
                       onClick={(e) => { e.stopPropagation(); handleDeleteMarker(selectedMarker.id!); }} 
@@ -1584,11 +1642,14 @@ function AppInner() {
                             </div>
                           )}
                           <div className="bg-gray-50 p-6 rounded-[2rem] border border-gray-100">
-                             <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Editor's Score</p>
+                             <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Community Rating</p>
                              <p className="text-lg font-black flex items-center gap-2">
                                {selectedMarker.rating ? selectedMarker.rating.toFixed(1) : 'N/A'}
                                <Star className="w-4 h-4 fill-yellow-400 stroke-yellow-400" />
                              </p>
+                             {reviews.length > 0 && (
+                               <p className="text-[9px] text-gray-400 mt-1">{reviews.length} review{reviews.length !== 1 ? 's' : ''}</p>
+                             )}
                           </div>
                        </div>
 
@@ -1629,25 +1690,29 @@ function AppInner() {
                              <p className="text-[10px] font-bold text-gray-400">{reviews.length} Comments</p>
                           </div>
 
-                          {/* Leave a Review */}
-                          <form onSubmit={handleAddReview} className="p-2 border border-gray-100 rounded-[2rem] bg-gray-50 flex flex-col gap-2">
-                             <textarea 
-                               value={newReviewText}
-                               onChange={(e) => setNewReviewText(e.target.value)}
-                               placeholder="Drop a tip for the tribe..." 
-                               className="bg-transparent w-full p-4 text-xs font-bold outline-none resize-none h-20"
-                             />
-                             <div className="flex items-center justify-between px-4 pb-2">
-                                <div className="flex gap-1">
-                                   {[1,2,3,4,5].map(star => (
-                                     <button key={star} type="button" onClick={() => setNewReviewRating(star)}>
-                                       <Star className={`w-4 h-4 ${star <= newReviewRating ? 'fill-yellow-400 stroke-yellow-400' : 'text-gray-200'}`} />
-                                     </button>
-                                   ))}
-                                </div>
-                                <button type="submit" className="bg-black text-white px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all">Submit</button>
-                             </div>
-                          </form>
+                          {/* Leave a Review — non-owners only */}
+                          {selectedMarker.ownerId !== user.uid ? (
+                            <form onSubmit={handleAddReview} className="p-2 border border-gray-100 rounded-[2rem] bg-gray-50 flex flex-col gap-2">
+                               <textarea 
+                                 value={newReviewText}
+                                 onChange={(e) => setNewReviewText(e.target.value)}
+                                 placeholder="Drop a tip for the tribe..." 
+                                 className="bg-transparent w-full p-4 text-xs font-bold outline-none resize-none h-20"
+                               />
+                               <div className="flex items-center justify-between px-4 pb-2">
+                                  <div className="flex gap-1">
+                                     {[1,2,3,4,5].map(star => (
+                                       <button key={star} type="button" onClick={() => setNewReviewRating(star)}>
+                                         <Star className={`w-4 h-4 ${star <= newReviewRating ? 'fill-yellow-400 stroke-yellow-400' : 'text-gray-200'}`} />
+                                       </button>
+                                     ))}
+                                  </div>
+                                  <button type="submit" className="bg-black text-white px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest shadow-lg active:scale-95 transition-all">Submit</button>
+                               </div>
+                            </form>
+                          ) : (
+                            <p className="text-[10px] text-gray-400 text-center py-3">You added this spot — tribe members can leave reviews.</p>
+                          )}
 
                           {/* Review List */}
                           <div className="space-y-4">
