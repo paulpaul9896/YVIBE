@@ -1,6 +1,6 @@
 import React, { useEffect, useState, FormEvent, useRef } from 'react';
 import { auth, db, storage } from './firebase';
-import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, signOut, updateProfile } from 'firebase/auth';
 import { 
   doc, 
   getDocFromServer, 
@@ -13,7 +13,8 @@ import {
   getDocs,
   deleteDoc,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  Timestamp
 } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { useAuthState } from 'react-firebase-hooks/auth';
@@ -48,9 +49,11 @@ import {
   Menu,
   Moon,
   Sun,
-  Compass
+  Compass,
+  Zap
 } from 'lucide-react';
-import { Group, Marker as LociMarker, Review } from './types';
+import { Group, Marker as LociMarker, Review, VibingDrop } from './types';
+import { createVibingDrop, deleteVibingDrop, subscribeToActiveDrops } from './services/vibingDrops';
 import { APIProvider, Map, AdvancedMarker as MapboxMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import PlaceAutocomplete from './components/PlaceAutocomplete';
 import ClusteredMarkers from './components/ClusteredMarkers';
@@ -181,6 +184,55 @@ const getCategoryIcon = (cat: string) => {
   }
 };
 
+// ── Vibing Drop helpers ────────────────────────────────────────────────────
+const formatTimeLeft = (expiresAt: any): string => {
+  if (!expiresAt?.toMillis) return '';
+  const ms = expiresAt.toMillis() - Date.now();
+  if (ms <= 0) return 'Expired';
+  const hours = Math.floor(ms / (1000 * 60 * 60));
+  const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
+
+const VibingDropMarkerContent = ({ drop, isSelected }: { drop: VibingDrop; isSelected: boolean }) => {
+  const timeLeft = drop.expiresAt?.toMillis ? Math.max(0, drop.expiresAt.toMillis() - Date.now()) : 0;
+  const isFresh = timeLeft > 18 * 60 * 60 * 1000;
+
+  return (
+    <div style={{
+      width: '52px',
+      height: '52px',
+      borderRadius: '50%',
+      padding: '3px',
+      background: isFresh
+        ? 'linear-gradient(135deg, #f9a825, #e91e8c, #9c27b0, #2196f3)'
+        : 'linear-gradient(135deg, #bdbdbd, #9e9e9e)',
+      boxShadow: isSelected
+        ? '0 0 0 3px white, 0 0 22px rgba(233,30,140,0.65)'
+        : '0 0 0 2px white, 0 4px 12px rgba(0,0,0,0.25)',
+      transform: isSelected ? 'scale(1.2)' : 'scale(1)',
+      transition: 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1)',
+      cursor: 'pointer',
+      flexShrink: 0,
+    }}>
+      <img
+        src={drop.userAvatar || ''}
+        alt={drop.username}
+        style={{
+          width: '100%',
+          height: '100%',
+          borderRadius: '50%',
+          objectFit: 'cover',
+          border: '2px solid white',
+          display: 'block',
+        }}
+        referrerPolicy="no-referrer"
+      />
+    </div>
+  );
+};
+
 const MarkerHtmlContent = ({m, isSelected}: {m: LociMarker, isSelected: boolean}) => {
   const iconElement = getCategoryIcon(m.category);
   // Modify the icon color to be white, while keeping its structure
@@ -251,6 +303,15 @@ function AppInner() {
   const [newMarkerLinkInput, setNewMarkerLinkInput] = useState('');
   const [isUploading, setIsUploading] = useState(false);
 
+  // Vibing Drops state
+  const [vibingDrops, setVibingDrops] = useState<VibingDrop[]>([]);
+  const [selectedDrop, setSelectedDrop] = useState<VibingDrop | null>(null);
+  const [isCreatingDrop, setIsCreatingDrop] = useState(false);
+  const [newDropText, setNewDropText] = useState('');
+  const [newDropMood, setNewDropMood] = useState('');
+  const [newDropImageFile, setNewDropImageFile] = useState<File | null>(null);
+  const [isUploadingDrop, setIsUploadingDrop] = useState(false);
+
   useEffect(() => {
     const saved = localStorage.getItem('customCategories');
     if (saved) {
@@ -307,6 +368,7 @@ function AppInner() {
   const [selectedFilterCategories, setSelectedFilterCategories] = useState<string[]>([]);
   const [selectedFilterTags, setSelectedFilterTags] = useState<string[]>([]);
   const [vibeFilterMode, setVibeFilterMode] = useState<'category' | 'tags'>('category');
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [isJoiningGroup, setIsJoiningGroup] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => Promise<void>} | null>(null);
@@ -410,6 +472,65 @@ function AppInner() {
     return () => unsubscribe();
   }, [selectedGroup, selectedMarker]);
 
+  // Subscribe to live vibing drops
+  useEffect(() => {
+    if (!user) return;
+    const unsubscribe = subscribeToActiveDrops(
+      (drops) => setVibingDrops(drops),
+      (err) => handleFirestoreError(err as Error, OperationType.LIST, 'vibing_drops'),
+    );
+    return () => unsubscribe();
+  }, [user]);
+
+  const handleCreateDrop = async () => {
+    if (!user || !newDropText.trim()) return;
+    setIsUploadingDrop(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          let imageUrl: string | undefined;
+          if (newDropImageFile) {
+            const fileRef = ref(storage, `drops/${Date.now()}_${newDropImageFile.name}`);
+            const snapshot = await uploadBytesResumable(fileRef, newDropImageFile);
+            imageUrl = await getDownloadURL(snapshot.ref);
+          }
+          await createVibingDrop({
+            userId: user.uid,
+            username: user.displayName || 'Anonymous',
+            userAvatar: user.photoURL || '',
+            text: newDropText.trim(),
+            imageUrl,
+            mood: newDropMood || undefined,
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          });
+          setNewDropText('');
+          setNewDropMood('');
+          setNewDropImageFile(null);
+          setIsCreatingDrop(false);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, 'vibing_drops');
+        } finally {
+          setIsUploadingDrop(false);
+        }
+      },
+      () => {
+        setIsUploadingDrop(false);
+        handleFirestoreError(new Error('Location access denied'), OperationType.CREATE, 'vibing_drops');
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+
+  const handleDeleteDrop = async (dropId: string) => {
+    try {
+      await deleteVibingDrop(dropId);
+      setSelectedDrop(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, 'vibing_drops');
+    }
+  };
+
   const handleCreateGroup = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -454,6 +575,25 @@ function AppInner() {
           });
         }
       });
+    }
+  };
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !auth.currentUser) return;
+    setIsUploadingAvatar(true);
+    try {
+      const fileRef = ref(storage, `avatars/${auth.currentUser.uid}`);
+      const snapshot = await uploadBytesResumable(fileRef, file);
+      const url = await getDownloadURL(snapshot.ref);
+      await updateProfile(auth.currentUser, { photoURL: url });
+      // Force re-render by triggering auth state refresh
+      await auth.currentUser.reload();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'avatars');
+    } finally {
+      setIsUploadingAvatar(false);
+      e.target.value = '';
     }
   };
 
@@ -745,6 +885,18 @@ function AppInner() {
                   onMarkerClick={setSelectedMarker}
                   MarkerHtmlContent={({m, isSelected}) => <MarkerHtmlContent m={m} isSelected={isSelected} />}
                 />
+
+                {/* Vibing Drop Markers */}
+                {vibingDrops.map(drop => (
+                  <MapboxMarker
+                    key={`drop-${drop.id}`}
+                    position={{ lat: drop.lat, lng: drop.lng }}
+                    onClick={() => { setSelectedDrop(drop); setSelectedMarker(null); }}
+                    style={{ zIndex: selectedDrop?.id === drop.id ? 200 : 50 }}
+                  >
+                    <VibingDropMarkerContent drop={drop} isSelected={selectedDrop?.id === drop.id} />
+                  </MapboxMarker>
+                ))}
                 </Map>
               
               <AnimatePresence>
@@ -769,6 +921,66 @@ function AppInner() {
               </AnimatePresence>
 
             </div>
+
+          {/* Vibing Drop Detail Card */}
+          <AnimatePresence>
+            {selectedDrop && (
+              <motion.div
+                key="drop-detail-card"
+                initial={{ y: 24, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 24, opacity: 0 }}
+                transition={{ type: 'spring', bounce: 0.25, duration: 0.4 }}
+                className="fixed bottom-28 left-1/2 -translate-x-1/2 z-[1500] w-[calc(100%-2rem)] max-w-sm pointer-events-auto"
+              >
+                <div className="bg-white rounded-[2rem] shadow-2xl overflow-hidden border border-gray-100">
+                  <div className="p-4 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={selectedDrop.userAvatar}
+                        alt={selectedDrop.username}
+                        className="w-10 h-10 rounded-full object-cover shrink-0 border border-gray-100"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="min-w-0">
+                        <p className="font-black text-sm truncate">{selectedDrop.username}</p>
+                        <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wide">
+                          ⚡ Expires in {formatTimeLeft(selectedDrop.expiresAt)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      {selectedDrop.userId === user!.uid && (
+                        <button
+                          onClick={() => handleDeleteDrop(selectedDrop.id!)}
+                          className="p-2 text-red-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setSelectedDrop(null)}
+                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                  {selectedDrop.mood && (
+                    <p className="text-2xl px-4 pb-1">{selectedDrop.mood}</p>
+                  )}
+                  <p className="px-4 pb-4 text-sm font-medium text-gray-700 leading-relaxed">{selectedDrop.text}</p>
+                  {selectedDrop.imageUrl && (
+                    <img
+                      src={selectedDrop.imageUrl}
+                      alt=""
+                      className="w-full max-h-64 object-cover"
+                    />
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
         {/* Bottom Tab Bar (WhatsApp iOS Style) */}
         <div className="fixed bottom-6 w-full px-2 md:px-0 md:left-1/2 md:-translate-x-1/2 md:w-auto flex justify-center items-center gap-1.5 md:gap-2 pointer-events-none z-[1000] pb-[env(safe-area-inset-bottom)]">
@@ -814,6 +1026,15 @@ function AppInner() {
             })}
           </nav>
           
+          {/* ⚡ Vibing Drop Button */}
+          <button
+            onClick={() => setIsCreatingDrop(true)}
+            className="pointer-events-auto rounded-full w-[3rem] h-[3rem] md:w-[3.5rem] md:h-[3.5rem] flex items-center justify-center shrink-0 active:scale-95 transition-all"
+            style={{ background: 'linear-gradient(135deg,#f9a825,#e91e8c,#9c27b0)', boxShadow: '0 8px 24px rgba(233,30,140,0.45)' }}
+          >
+            <Zap className="w-4 h-4 md:w-5 md:h-5 text-white stroke-[2px]" />
+          </button>
+
           {/* Locate Button Circle */}
           <button 
             onClick={handleLocateMe}
@@ -1013,10 +1234,32 @@ function AppInner() {
                         {/* Profile Info */}
                         <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
                           <div className="flex items-center gap-3">
-                            <img src={user.photoURL || ''} alt="" className="w-12 h-12 rounded-[1rem] bg-white shadow-sm border border-gray-100 object-cover" referrerPolicy="no-referrer" />
+                            <label className="relative cursor-pointer group shrink-0">
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={handleAvatarUpload}
+                                disabled={isUploadingAvatar}
+                              />
+                              <img
+                                src={user.photoURL || ''}
+                                alt=""
+                                className="w-14 h-14 rounded-[1rem] bg-white shadow-sm border border-gray-100 object-cover transition-opacity"
+                                style={{ opacity: isUploadingAvatar ? 0.4 : 1 }}
+                                referrerPolicy="no-referrer"
+                              />
+                              <div className={`absolute inset-0 rounded-[1rem] flex items-center justify-center transition-opacity ${isUploadingAvatar ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} bg-black/40`}>
+                                {isUploadingAvatar
+                                  ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                  : <Camera className="w-4 h-4 text-white" />
+                                }
+                              </div>
+                            </label>
                             <div>
                               <p className="text-lg font-black truncate max-w-[150px]">{user.displayName}</p>
                               <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">{user.email}</p>
+                              <p className="text-[8px] text-gray-400 mt-0.5">Tap avatar to change</p>
                             </div>
                           </div>
                         </div>
@@ -1039,6 +1282,110 @@ function AppInner() {
                   )}
 
                 </div>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {/* ⚡ Create Vibing Drop Modal */}
+          {isCreatingDrop && (
+            <motion.div
+              key="create-drop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-xl z-[3000] flex items-end sm:items-center justify-center p-4"
+              onClick={(e) => { if (e.target === e.currentTarget) setIsCreatingDrop(false); }}
+            >
+              <motion.div
+                initial={{ y: 60, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 60, opacity: 0 }}
+                transition={{ type: 'spring', bounce: 0.2, duration: 0.5 }}
+                className="bg-white rounded-[2.5rem] w-full max-w-sm p-6 space-y-5"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between">
+                  <h2
+                    className="text-2xl font-black italic"
+                    style={{ background: 'linear-gradient(135deg,#f9a825,#e91e8c,#9c27b0)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}
+                  >
+                    DROP IT ⚡
+                  </h2>
+                  <button onClick={() => setIsCreatingDrop(false)} className="p-2 hover:bg-gray-100 rounded-full transition-colors">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Mood selector */}
+                <div>
+                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-2">Mood</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {['😊','🎉','🍜','☕️','🛍️','🎵','🌙','✨','🔥','💫'].map(emoji => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setNewDropMood(prev => prev === emoji ? '' : emoji)}
+                        className={`text-xl p-2 rounded-xl transition-all ${newDropMood === emoji ? 'bg-black scale-110' : 'bg-gray-50 hover:bg-gray-100'}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Text */}
+                <div>
+                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-2">What's your vibe?</p>
+                  <textarea
+                    value={newDropText}
+                    onChange={e => setNewDropText(e.target.value.slice(0, 280))}
+                    placeholder="Share what's happening right now..."
+                    className="w-full bg-gray-50 rounded-2xl p-4 text-sm font-medium outline-none resize-none h-24"
+                    autoFocus
+                  />
+                  <p className="text-[9px] text-gray-400 text-right mt-1">{newDropText.length}/280</p>
+                </div>
+
+                {/* Photo */}
+                <div>
+                  <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-2">Photo (optional)</p>
+                  {newDropImageFile ? (
+                    <div className="relative">
+                      <img src={URL.createObjectURL(newDropImageFile)} alt="" className="w-full h-40 object-cover rounded-2xl" />
+                      <button
+                        type="button"
+                        onClick={() => setNewDropImageFile(null)}
+                        className="absolute top-2 right-2 bg-black/50 text-white rounded-full p-1 hover:bg-black/70 transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="flex items-center justify-center gap-2 w-full h-20 border-2 border-dashed border-gray-200 rounded-2xl cursor-pointer hover:border-gray-300 transition-colors">
+                      <Camera className="w-5 h-5 text-gray-300" />
+                      <span className="text-sm text-gray-400 font-medium">Add a photo</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={e => setNewDropImageFile(e.target.files?.[0] || null)}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* Submit */}
+                <button
+                  type="button"
+                  onClick={handleCreateDrop}
+                  disabled={!newDropText.trim() || isUploadingDrop}
+                  className="w-full py-4 text-white font-black rounded-2xl shadow-lg active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ background: 'linear-gradient(135deg,#f9a825,#e91e8c,#9c27b0)' }}
+                >
+                  {isUploadingDrop ? 'Dropping...' : '⚡ Drop it!'}
+                </button>
+
+                <p className="text-[9px] text-gray-400 text-center">Your drop appears on the map for 24 hours ✨</p>
               </motion.div>
             </motion.div>
           )}

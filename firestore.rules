@@ -133,5 +133,22 @@ service cloud.firestore {
         }
       }
     }
+
+    // ── Vibing Drops (24-hour ephemeral map drops, global to all signed-in users) ──
+    match /vibing_drops/{dropId} {
+      function isValidDrop(data) {
+        return data.keys().hasAll(['userId', 'username', 'userAvatar', 'text', 'lat', 'lng', 'createdAt', 'expiresAt']) &&
+               data.userId is string && data.userId == request.auth.uid &&
+               data.username is string && data.username.size() <= 100 &&
+               data.userAvatar is string && data.userAvatar.size() <= 500 &&
+               data.text is string && data.text.size() > 0 && data.text.size() <= 500 &&
+               data.lat is number && data.lng is number &&
+               data.createdAt == request.time;
+      }
+
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidDrop(incoming());
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
   }
 }

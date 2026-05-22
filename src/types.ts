@@ -42,3 +42,17 @@ export interface Review {
   ownerId: string;
   createdAt: any;
 }
+
+export interface VibingDrop {
+  id?: string;
+  userId: string;
+  username: string;
+  userAvatar: string;
+  text: string;
+  imageUrl?: string;
+  mood?: string;
+  lat: number;
+  lng: number;
+  createdAt: any;
+  expiresAt: any;
+}
