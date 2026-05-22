@@ -140,7 +140,7 @@ service cloud.firestore {
         return data.keys().hasAll(['userId', 'username', 'userAvatar', 'text', 'lat', 'lng', 'createdAt', 'expiresAt']) &&
                data.userId is string && data.userId == request.auth.uid &&
                data.username is string && data.username.size() <= 100 &&
-               data.userAvatar is string && data.userAvatar.size() <= 500 &&
+               data.userAvatar is string &&
                data.text is string && data.text.size() > 0 && data.text.size() <= 500 &&
                data.lat is number && data.lng is number &&
                data.createdAt == request.time;

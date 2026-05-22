@@ -510,35 +510,45 @@ function AppInner() {
     if (!user || !newDropText.trim()) return;
     setIsUploadingDrop(true);
     try {
-      // Wrap callback-based geolocation in a proper Promise so finally always runs
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        if (!navigator.geolocation) { reject(new Error('Geolocation not supported')); return; }
-        const timer = setTimeout(() => reject(new Error('Location request timed out')), 12000);
-        navigator.geolocation.getCurrentPosition(
-          (p) => { clearTimeout(timer); resolve(p); },
-          (err) => { clearTimeout(timer); reject(err); },
-          { enableHighAccuracy: true, timeout: 10000 },
-        );
-      });
+      // Get location — 5s timeout, fall back to map centre if unavailable
+      let lat = 22.3193;
+      let lng = 114.1694;
+      try {
+        const mapCentre = mapObj?.getCenter();
+        if (mapCentre) { lat = mapCentre.lat(); lng = mapCentre.lng(); }
+      } catch { /* ignore */ }
+
+      if (navigator.geolocation) {
+        const gpsResult = await Promise.race([
+          new Promise<{ lat: number; lng: number }>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+              (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+              reject,
+              { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 },
+            );
+          }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5500)),
+        ]).catch(() => null);
+        if (gpsResult) { lat = gpsResult.lat; lng = gpsResult.lng; }
+      }
 
       // Compress image to base64 — no Storage needed (Spark plan safe)
       let imageUrl: string | undefined;
       if (newDropImageFile) {
         try {
           imageUrl = await compressImageToBase64(newDropImageFile, 800, 0.72);
-        } catch {
-          // continue without image if compression fails
-        }
+        } catch { /* continue without image */ }
       }
+
       await createVibingDrop({
         userId: user.uid,
         username: user.displayName || 'Anonymous',
-        userAvatar: localAvatarUrl || user.photoURL || '',
+        userAvatar: user.photoURL || '',
         text: newDropText.trim(),
         imageUrl,
         mood: newDropMood || undefined,
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
+        lat,
+        lng,
       });
       setNewDropText('');
       setNewDropMood('');
