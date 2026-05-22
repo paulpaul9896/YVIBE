@@ -53,7 +53,7 @@ import {
   Zap
 } from 'lucide-react';
 import { Group, Marker as LociMarker, Review, VibingDrop } from './types';
-import { createVibingDrop, deleteVibingDrop, subscribeToActiveDrops } from './services/vibingDrops';
+import { createVibingDrop, deleteVibingDrop, subscribeToActiveDrops, runExpiredDropCleanup } from './services/vibingDrops';
 import { APIProvider, Map, AdvancedMarker as MapboxMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import PlaceAutocomplete from './components/PlaceAutocomplete';
 import ClusteredMarkers from './components/ClusteredMarkers';
@@ -496,14 +496,36 @@ function AppInner() {
     return () => unsubscribe();
   }, [selectedGroup, selectedMarker]);
 
-  // Subscribe to live vibing drops
+  // Subscribe to live vibing drops + best-effort cleanup of expired ones
   useEffect(() => {
     if (!user) return;
+
+    let cancelled = false;
+    const triggerCleanup = (force = false) => {
+      if (cancelled) return;
+      runExpiredDropCleanup({ force, maxBatches: force ? 3 : 5 }).catch(() => {});
+    };
+
+    triggerCleanup(false);
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') triggerCleanup(false);
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    // 每 30 分鐘再清一次（user 長開 app 時，過期 drop 仍會被順手刪）
+    const intervalId = window.setInterval(() => triggerCleanup(false), 30 * 60 * 1000);
+
     const unsubscribe = subscribeToActiveDrops(
       (drops) => setVibingDrops(drops),
       (err) => handleFirestoreError(err as Error, OperationType.LIST, 'vibing_drops'),
     );
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisible);
+      unsubscribe();
+    };
   }, [user]);
 
   const handleCreateDrop = async () => {
@@ -550,6 +572,7 @@ function AppInner() {
         lat,
         lng,
       });
+      runExpiredDropCleanup({ force: true, maxBatches: 3 }).catch(() => {});
       setNewDropText('');
       setNewDropMood('');
       setNewDropImageFile(null);
@@ -1807,35 +1830,45 @@ function AppInner() {
                       <Trash2 className="w-5 h-5" />
                     </button>
                   )}
-                  <button 
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setSelectedMarker(null); setIsEditingMarker(false); }} 
-                    className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-black border-2 border-gray-100 shadow-2xl hover:bg-gray-50 active:scale-90 transition-all pointer-events-auto"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
+                  {!isEditingMarker && (
+                    <button 
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setSelectedMarker(null); setIsEditingMarker(false); }} 
+                      className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-black border-2 border-gray-100 shadow-2xl hover:bg-gray-50 active:scale-90 transition-all pointer-events-auto"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
+                  )}
                 </div>
                 
                 {isEditingMarker ? (
                   <form onSubmit={handleUpdateMarker} className="flex flex-col">
-                    <div className="p-4 bg-black text-white shrink-0">
-                      <h2 className="text-xl font-black tracking-tighter mb-1 italic">EDIT VIBE</h2>
-                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Update your discovery</p>
+                    {/* Header */}
+                    <div className="px-6 pt-8 pb-6 bg-black text-white shrink-0 rounded-t-[3.5rem]">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h2 className="text-3xl font-black tracking-tighter italic">EDIT VIBE</h2>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] mt-1">Update your discovery</p>
+                        </div>
+                        <button type="button" onClick={() => setIsEditingMarker(false)} className="w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-colors shrink-0 mt-1">
+                          <X className="w-5 h-5 text-white" />
+                        </button>
+                      </div>
                     </div>
-                    
-                    <div className="p-4 space-y-4 text-black flex-1">
-                      <div className="space-y-4">
-                        <input name="name" defaultValue={selectedMarker.name} required className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm font-bold outline-none" />
+
+                    <div className="px-6 py-6 space-y-5 text-black flex-1">
+                      <div className="space-y-5">
+                        <input name="name" defaultValue={selectedMarker.name} required placeholder="Place name..." className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-base font-bold outline-none ring-2 ring-transparent focus:ring-black/10 transition-all" />
                         
                         <div className="space-y-3">
-                          <label className="text-[10px] font-black text-gray-300 uppercase tracking-widest block">Category</label>
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Category</label>
                           <div className="flex flex-wrap gap-2 items-center">
                             {Array.from(new Set(['restaurant', 'shopping', 'doctor', 'pet friendly', 'cafe', 'bar', 'hotel', 'sightseeing', 'home product', ...customCategories.map(c => c.toLowerCase()), 'other'])).map(cat => (
                               <div key={cat} className="relative group/cat">
                                 <button 
                                   type="button" 
                                   onClick={() => setMarkerCategory(cat)}
-                                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${markerCategory === cat ? 'bg-black text-white' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}
+                                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${markerCategory === cat ? 'bg-black text-white shadow-md' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
                                 >
                                   <div className="w-4 h-4 flex items-center justify-center scale-75">{getCategoryIcon(cat)}</div> {cat}
                                 </button>
@@ -1876,20 +1909,20 @@ function AppInner() {
                           </div>
                         </div>
 
-                        <div className="bg-gray-50 p-4 rounded-2xl flex items-center gap-2">
-                          <span className="text-[10px] font-black text-gray-300 uppercase tracking-widest mr-2">Rating</span>
+                        <div className="bg-gray-50 px-5 py-4 rounded-2xl flex items-center justify-between">
+                          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Rating</span>
                           <div className="flex items-center gap-2">
                             {[1,2,3,4,5].map(star => (
-                               <button key={star} type="button" onClick={() => setNewReviewRating(star)}>
-                                 <Star className={`w-5 h-5 ${star <= newReviewRating ? 'fill-yellow-400 stroke-yellow-400' : 'text-gray-200'}`} />
+                               <button key={star} type="button" onClick={() => setNewReviewRating(star)} className="active:scale-110 transition-transform">
+                                 <Star className={`w-6 h-6 ${star <= newReviewRating ? 'fill-yellow-400 stroke-yellow-400' : 'text-gray-200'}`} />
                                </button>
                             ))}
                           </div>
                         </div>
                       </div>
 
-                      <div className="space-y-4">
-                        <textarea name="description" defaultValue={selectedMarker.description} placeholder="Notes..." className="w-full bg-gray-50 border-none rounded-2xl p-4 text-sm font-bold outline-none h-24 resize-none" />
+                      <div>
+                        <textarea name="description" defaultValue={selectedMarker.description} placeholder="Notes..." className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 text-sm font-medium outline-none h-28 resize-none ring-2 ring-transparent focus:ring-black/10 transition-all" />
                       </div>
 
                       <div className="space-y-4">
@@ -1972,10 +2005,10 @@ function AppInner() {
                       </div>
                     </div>
 
-                    <div className="p-6 bg-white border-t border-gray-50 flex gap-3 shrink-0">
-                      <button type="button" onClick={() => setIsEditingMarker(false)} className="flex-1 py-4 text-[10px] font-black text-gray-300 hover:text-black uppercase tracking-[0.2em] bg-gray-50 rounded-2xl">Cancel</button>
-                      <button type="submit" disabled={isUploading} className="flex-[2] bg-black text-white py-4 rounded-2xl font-black shadow-xl uppercase tracking-[0.2em] text-[10px] disabled:opacity-50">
-                        {isUploading ? 'Uploading...' : 'Save'}
+                    <div className="px-6 pb-8 pt-2 bg-white flex gap-3 shrink-0">
+                      <button type="button" onClick={() => setIsEditingMarker(false)} className="flex-1 py-4 text-[10px] font-black text-gray-400 hover:text-black uppercase tracking-[0.2em] bg-gray-100 rounded-2xl transition-colors">Cancel</button>
+                      <button type="submit" disabled={isUploading} className="flex-[2] bg-black text-white py-4 rounded-2xl font-black shadow-lg uppercase tracking-[0.2em] text-[10px] disabled:opacity-50 active:scale-[0.98] transition-all">
+                        {isUploading ? 'Uploading...' : 'Save Changes'}
                       </button>
                     </div>
                   </form>

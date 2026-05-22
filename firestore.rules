@@ -148,7 +148,10 @@ service cloud.firestore {
 
       allow get, list: if isSignedIn();
       allow create: if isSignedIn() && isValidDrop(incoming());
-      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      allow delete: if isSignedIn() && (
+        existing().userId == request.auth.uid ||
+        existing().expiresAt <= request.time
+      );
     }
   }
 }
