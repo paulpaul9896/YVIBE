@@ -1084,19 +1084,19 @@ function AppInner() {
                 exit={{ scale: 0.9, opacity: 0, y: 20 }} 
                 className="w-full max-w-md bg-white shadow-2xl flex flex-col overflow-hidden rounded-[3rem] max-h-[85vh] pointer-events-auto"
               >
-                  <div className="p-6 md:p-8 pb-4 flex items-center justify-between border-b border-gray-50">
-                    <h2 className="text-2xl font-black italic shrink-0">
-                      {activeSheet === 'communities' ? 'COMMUNITIES' : activeSheet === 'discover' ? 'VIBE' : 'SETTINGS'}
-                    </h2>
-                    <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-                      {activeSheet === 'communities' && (
-                        <div className="flex gap-2 shrink-0">
-                            <button onClick={() => { setIsJoiningGroup(true); setActiveSheet('none'); }} className="py-2 px-4 rounded-full border-2 border-gray-100 text-[10px] font-black uppercase tracking-widest hover:border-black transition-colors">Join</button>
-                            <button onClick={() => { setIsCreatingGroup(true); setActiveSheet('none'); }} className="py-2 px-4 rounded-full bg-black text-white text-[10px] font-black uppercase tracking-widest hover:bg-gray-900 transition-colors">Create</button>
-                        </div>
-                      )}
+                  <div className="p-6 md:p-8 pb-4 border-b border-gray-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <h2 className="text-2xl font-black italic">
+                        {activeSheet === 'communities' ? 'COMMUNITIES' : activeSheet === 'discover' ? 'VIBE' : 'SETTINGS'}
+                      </h2>
                       <button onClick={() => setActiveSheet('none')} className="p-2 hover:bg-gray-100 rounded-full transition-colors shrink-0"><X className="w-6 h-6" /></button>
                     </div>
+                    {activeSheet === 'communities' && (
+                      <div className="flex gap-2 mt-3">
+                        <button onClick={() => { setIsJoiningGroup(true); setActiveSheet('none'); }} className="flex-1 py-2.5 rounded-full border-2 border-gray-100 text-[10px] font-black uppercase tracking-widest hover:border-black transition-colors text-center">Join</button>
+                        <button onClick={() => { setIsCreatingGroup(true); setActiveSheet('none'); }} className="flex-1 py-2.5 rounded-full bg-black text-white text-[10px] font-black uppercase tracking-widest hover:bg-gray-900 transition-colors text-center">Create</button>
+                      </div>
+                    )}
                   </div>
                   
                   <div className="flex-1 overflow-y-auto scrollbar-hide p-6 md:p-8 space-y-8">
