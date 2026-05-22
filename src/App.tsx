@@ -1,4 +1,4 @@
-import React, { useEffect, useState, FormEvent, useRef } from 'react';
+import React, { useEffect, useState, FormEvent, useRef, useCallback } from 'react';
 import { auth, db, storage } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { 
@@ -56,6 +56,7 @@ import { Group, Marker as LociMarker, Review, VibingDrop } from './types';
 import { createVibingDrop, deleteVibingDrop, subscribeToActiveDrops, runExpiredDropCleanup } from './services/vibingDrops';
 import { APIProvider, Map, AdvancedMarker as MapboxMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import PlaceAutocomplete from './components/PlaceAutocomplete';
+import MapViewTracker from './components/MapViewTracker';
 import ClusteredMarkers from './components/ClusteredMarkers';
 
 const GOOGLE_MAPS_PLATFORM_KEY = (
@@ -398,8 +399,13 @@ function AppInner() {
   const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => Promise<void>} | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [toastMessage, setToastMessage] = useState<{title: string, message: string, type: 'error' | 'success'} | null>(null);
-  const [searchResultMarker, setSearchResultMarker] = useState<{lat: number, lng: number, name: string} | null>(null);
+  const [searchResultMarker, setSearchResultMarker] = useState<{lat: number, lng: number, name: string, address?: string} | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
+  const [mapViewCenter, setMapViewCenter] = useState({ lat: 22.3193, lng: 114.1694 });
+
+  const handleMapViewCenterChange = useCallback((center: { lat: number; lng: number }) => {
+    setMapViewCenter(center);
+  }, []);
 
   const mapObj = useMap();
 
@@ -424,16 +430,20 @@ function AppInner() {
     }
   };
 
-  const handleSelectSuggestion = (place: any) => {
+  const handleSelectSuggestion = (place: google.maps.places.PlaceResult) => {
     try {
       const lat = place.geometry?.location?.lat();
-      const lon = place.geometry?.location?.lng();
-      const name = place.name;
-      
-      if (!lat || !lon) return;
-      
-      setMapCenter([lat, lon]);
-      setSearchResultMarker({ lat, lng: lon, name });
+      const lng = place.geometry?.location?.lng();
+      if (lat == null || lng == null) return;
+
+      const name = place.name || place.formatted_address || 'Search result';
+      setMapCenter([lat, lng]);
+      setSearchResultMarker({
+        lat,
+        lng,
+        name,
+        address: place.formatted_address,
+      });
     } catch (err) {
       console.error('Select suggestion error:', err);
     }
@@ -922,10 +932,41 @@ function AppInner() {
                 }}
               >
                 <MapController center={mapCenter} />
+                <MapViewTracker onCenterChange={handleMapViewCenterChange} />
                 
                 {searchResultMarker && (
-                  <MapboxMarker key="search-marker" position={{ lat: searchResultMarker.lat, lng: searchResultMarker.lng }}>
-                     <div className="bg-blue-500 w-4 h-4 rounded-full border-2 border-white shadow-xl" />
+                  <MapboxMarker key="search-marker" position={{ lat: searchResultMarker.lat, lng: searchResultMarker.lng }} style={{ zIndex: 150 }}>
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      transform: 'translateY(-4px)',
+                    }}>
+                      <div style={{
+                        backgroundColor: '#2563eb',
+                        color: '#fff',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        padding: '6px 12px',
+                        borderRadius: '16px',
+                        boxShadow: '0 4px 14px rgba(37,99,235,0.45)',
+                        maxWidth: '180px',
+                        textAlign: 'center',
+                        lineHeight: 1.3,
+                        marginBottom: '6px',
+                        border: '2px solid white',
+                      }}>
+                        {searchResultMarker.name}
+                      </div>
+                      <div style={{
+                        width: '14px',
+                        height: '14px',
+                        backgroundColor: '#2563eb',
+                        borderRadius: '50%',
+                        border: '3px solid white',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+                      }} />
+                    </div>
                   </MapboxMarker>
                 )}
 
@@ -971,7 +1012,8 @@ function AppInner() {
                     <PlaceAutocomplete 
                       onPlaceSelect={(place) => { handleSelectSuggestion(place); setIsSearchExpanded(false); }} 
                       onClear={() => { setSearchResultMarker(null); setMapCenter(null); }} 
-                      hasValue={!!searchResultMarker} 
+                      hasValue={!!searchResultMarker}
+                      locationBias={mapViewCenter}
                     />
                     <button onClick={() => setIsSearchExpanded(false)} className="shrink-0 p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 hover:text-black transition-colors">
                       <X className="w-5 h-5" />
