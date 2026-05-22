@@ -486,41 +486,43 @@ function AppInner() {
   const handleCreateDrop = async () => {
     if (!user || !newDropText.trim()) return;
     setIsUploadingDrop(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          let imageUrl: string | undefined;
-          if (newDropImageFile) {
-            const fileRef = ref(storage, `drops/${Date.now()}_${newDropImageFile.name}`);
-            const snapshot = await uploadBytesResumable(fileRef, newDropImageFile);
-            imageUrl = await getDownloadURL(snapshot.ref);
-          }
-          await createVibingDrop({
-            userId: user.uid,
-            username: user.displayName || 'Anonymous',
-            userAvatar: user.photoURL || '',
-            text: newDropText.trim(),
-            imageUrl,
-            mood: newDropMood || undefined,
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          });
-          setNewDropText('');
-          setNewDropMood('');
-          setNewDropImageFile(null);
-          setIsCreatingDrop(false);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.CREATE, 'vibing_drops');
-        } finally {
-          setIsUploadingDrop(false);
-        }
-      },
-      () => {
-        setIsUploadingDrop(false);
-        handleFirestoreError(new Error('Location access denied'), OperationType.CREATE, 'vibing_drops');
-      },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
+    try {
+      // Wrap callback-based geolocation in a proper Promise so finally always runs
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!navigator.geolocation) { reject(new Error('Geolocation not supported')); return; }
+        const timer = setTimeout(() => reject(new Error('Location request timed out')), 12000);
+        navigator.geolocation.getCurrentPosition(
+          (p) => { clearTimeout(timer); resolve(p); },
+          (err) => { clearTimeout(timer); reject(err); },
+          { enableHighAccuracy: true, timeout: 10000 },
+        );
+      });
+
+      let imageUrl: string | undefined;
+      if (newDropImageFile) {
+        const fileRef = ref(storage, `drops/${Date.now()}_${newDropImageFile.name}`);
+        const snapshot = await uploadBytesResumable(fileRef, newDropImageFile);
+        imageUrl = await getDownloadURL(snapshot.ref);
+      }
+      await createVibingDrop({
+        userId: user.uid,
+        username: user.displayName || 'Anonymous',
+        userAvatar: localAvatarUrl || user.photoURL || '',
+        text: newDropText.trim(),
+        imageUrl,
+        mood: newDropMood || undefined,
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+      });
+      setNewDropText('');
+      setNewDropMood('');
+      setNewDropImageFile(null);
+      setIsCreatingDrop(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'vibing_drops');
+    } finally {
+      setIsUploadingDrop(false);
+    }
   };
 
   const handleDeleteDrop = async (dropId: string) => {
@@ -1332,13 +1334,13 @@ function AppInner() {
                 {/* Mood selector */}
                 <div>
                   <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest mb-2">Mood</p>
-                  <div className="flex gap-2 flex-wrap">
+                  <div className="grid grid-cols-5 gap-2">
                     {['😊','🎉','🍜','☕️','🛍️','🎵','🌙','✨','🔥','💫'].map(emoji => (
                       <button
                         key={emoji}
                         type="button"
                         onClick={() => setNewDropMood(prev => prev === emoji ? '' : emoji)}
-                        className={`text-xl p-2 rounded-xl transition-all ${newDropMood === emoji ? 'bg-black scale-110' : 'bg-gray-50 hover:bg-gray-100'}`}
+                        className={`w-full aspect-square flex items-center justify-center text-2xl rounded-xl transition-all ${newDropMood === emoji ? 'bg-black scale-105' : 'bg-gray-50 hover:bg-gray-100'}`}
                       >
                         {emoji}
                       </button>
