@@ -369,6 +369,7 @@ function AppInner() {
   const [selectedFilterTags, setSelectedFilterTags] = useState<string[]>([]);
   const [vibeFilterMode, setVibeFilterMode] = useState<'category' | 'tags'>('category');
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [localAvatarUrl, setLocalAvatarUrl] = useState<string | null>(null);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [isJoiningGroup, setIsJoiningGroup] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => Promise<void>} | null>(null);
@@ -587,8 +588,7 @@ function AppInner() {
       const snapshot = await uploadBytesResumable(fileRef, file);
       const url = await getDownloadURL(snapshot.ref);
       await updateProfile(auth.currentUser, { photoURL: url });
-      // Force re-render by triggering auth state refresh
-      await auth.currentUser.reload();
+      setLocalAvatarUrl(url);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'avatars');
     } finally {
@@ -1016,8 +1016,11 @@ function AppInner() {
                   {Icon ? (
                     <Icon className={`w-5 h-5 md:w-6 md:h-6 ${isActive || isHovered ? 'stroke-[2px]' : 'stroke-[1.5px]'}`} />
                   ) : (
-                    <div className={`w-5 h-5 md:w-6 md:h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${isActive || isHovered ? 'border-black' : 'border-transparent'}`}>
-                       <img src={user.photoURL || ''} alt="" className="w-full h-full object-cover" />
+                    <div className={`w-5 h-5 md:w-6 md:h-6 rounded-full overflow-hidden border-[1.5px] transition-colors ${isActive || isHovered ? 'border-black' : 'border-transparent'} bg-gray-200 flex items-center justify-center`}>
+                      {(localAvatarUrl || user.photoURL)
+                        ? <img src={localAvatarUrl || user.photoURL || ''} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        : <span className="text-[8px] font-black text-gray-500">{(user.displayName || '?')[0].toUpperCase()}</span>
+                      }
                     </div>
                   )}
                   <span className="text-[9px] md:text-[10px] font-bold tracking-tight">{tab.label}</span>
@@ -1242,13 +1245,22 @@ function AppInner() {
                                 onChange={handleAvatarUpload}
                                 disabled={isUploadingAvatar}
                               />
-                              <img
-                                src={user.photoURL || ''}
-                                alt=""
-                                className="w-14 h-14 rounded-[1rem] bg-white shadow-sm border border-gray-100 object-cover transition-opacity"
-                                style={{ opacity: isUploadingAvatar ? 0.4 : 1 }}
-                                referrerPolicy="no-referrer"
-                              />
+                              {(localAvatarUrl || user.photoURL) ? (
+                                <img
+                                  src={localAvatarUrl || user.photoURL || ''}
+                                  alt=""
+                                  className="w-14 h-14 rounded-[1rem] bg-white shadow-sm border border-gray-100 object-cover transition-opacity"
+                                  style={{ opacity: isUploadingAvatar ? 0.4 : 1 }}
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <div
+                                  className="w-14 h-14 rounded-[1rem] bg-gray-200 flex items-center justify-center font-black text-xl text-gray-500"
+                                  style={{ opacity: isUploadingAvatar ? 0.4 : 1 }}
+                                >
+                                  {(user.displayName || user.email || '?')[0].toUpperCase()}
+                                </div>
+                              )}
                               <div className={`absolute inset-0 rounded-[1rem] flex items-center justify-center transition-opacity ${isUploadingAvatar ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} bg-black/40`}>
                                 {isUploadingAvatar
                                   ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -1287,6 +1299,7 @@ function AppInner() {
           )}
 
           {/* ⚡ Create Vibing Drop Modal */}
+          <AnimatePresence>
           {isCreatingDrop && (
             <motion.div
               key="create-drop"
@@ -1389,6 +1402,7 @@ function AppInner() {
               </motion.div>
             </motion.div>
           )}
+          </AnimatePresence>
 
           {isCreatingGroup && (
             <motion.div key="create-group" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/40 backdrop-blur-xl z-[2000] flex items-center justify-center p-6">
