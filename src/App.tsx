@@ -1,6 +1,6 @@
 import React, { useEffect, useState, FormEvent, useRef } from 'react';
 import { auth, db, storage } from './firebase';
-import { signInWithPopup, GoogleAuthProvider, signOut, updateProfile } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { 
   doc, 
   getDocFromServer, 
@@ -184,6 +184,24 @@ const getCategoryIcon = (cat: string) => {
   }
 };
 
+// ── Image compression helper (no Storage needed) ──────────────────────────
+const compressImageToBase64 = (file: File, maxWidth = 800, quality = 0.72): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+
 // ── Vibing Drop helpers ────────────────────────────────────────────────────
 const formatTimeLeft = (expiresAt: any): string => {
   if (!expiresAt?.toMillis) return '';
@@ -323,7 +341,12 @@ function AppInner() {
     } else {
       setSavedTags(['Birthday', 'Anniversary', '好食到著兩條褲']);
     }
-  }, []);
+    // Restore locally saved avatar (no Storage needed)
+    if (user) {
+      const savedAvatar = localStorage.getItem(`avatar_${user.uid}`);
+      if (savedAvatar) setLocalAvatarUrl(savedAvatar);
+    }
+  }, [user]);
 
   const handleAddCustomCategory = (cat: string) => {
     const trimmed = cat.trim();
@@ -498,11 +521,14 @@ function AppInner() {
         );
       });
 
+      // Compress image to base64 — no Storage needed (Spark plan safe)
       let imageUrl: string | undefined;
       if (newDropImageFile) {
-        const fileRef = ref(storage, `drops/${Date.now()}_${newDropImageFile.name}`);
-        const snapshot = await uploadBytesResumable(fileRef, newDropImageFile);
-        imageUrl = await getDownloadURL(snapshot.ref);
+        try {
+          imageUrl = await compressImageToBase64(newDropImageFile, 800, 0.72);
+        } catch {
+          // continue without image if compression fails
+        }
       }
       await createVibingDrop({
         userId: user.uid,
@@ -586,11 +612,10 @@ function AppInner() {
     if (!file || !auth.currentUser) return;
     setIsUploadingAvatar(true);
     try {
-      const fileRef = ref(storage, `avatars/${auth.currentUser.uid}`);
-      const snapshot = await uploadBytesResumable(fileRef, file);
-      const url = await getDownloadURL(snapshot.ref);
-      await updateProfile(auth.currentUser, { photoURL: url });
-      setLocalAvatarUrl(url);
+      // Compress to base64 (no Firebase Storage needed)
+      const base64 = await compressImageToBase64(file, 400, 0.8);
+      localStorage.setItem(`avatar_${auth.currentUser.uid}`, base64);
+      setLocalAvatarUrl(base64);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'avatars');
     } finally {
