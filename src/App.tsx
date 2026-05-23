@@ -203,6 +203,31 @@ const compressImageToBase64 = (file: File, maxWidth = 800, quality = 0.72): Prom
     img.src = url;
   });
 
+// ── Link label helper ──────────────────────────────────────────────────────
+const LINK_HOST_LABELS: Record<string, string> = {
+  'openrice.com': 'OpenRice',
+  'google.com': 'Google',
+  'maps.google.com': 'Google Maps',
+  'instagram.com': 'Instagram',
+  'facebook.com': 'Facebook',
+  'youtube.com': 'YouTube',
+  'tripadvisor.com': 'TripAdvisor',
+  'yelp.com': 'Yelp',
+};
+
+const getLinkLabel = (url: string): string => {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+    for (const [domain, label] of Object.entries(LINK_HOST_LABELS)) {
+      if (host === domain || host.endsWith(`.${domain}`)) return label;
+    }
+    const root = host.split('.')[0];
+    return root.charAt(0).toUpperCase() + root.slice(1);
+  } catch {
+    return 'Link';
+  }
+};
+
 // ── Vibing Drop helpers ────────────────────────────────────────────────────
 const formatTimeLeft = (expiresAt: any): string => {
   if (!expiresAt?.toMillis) return '';
@@ -217,6 +242,22 @@ const formatTimeLeft = (expiresAt: any): string => {
 const VibingDropMarkerContent = ({ drop, isSelected }: { drop: VibingDrop; isSelected: boolean }) => {
   const timeLeft = drop.expiresAt?.toMillis ? Math.max(0, drop.expiresAt.toMillis() - Date.now()) : 0;
   const isFresh = timeLeft > 18 * 60 * 60 * 1000;
+  const initial = (drop.username || '?')[0].toUpperCase();
+
+  const innerStyle: React.CSSProperties = {
+    width: '100%',
+    height: '100%',
+    borderRadius: '50%',
+    objectFit: 'cover',
+    border: '2px solid white',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#374151',
+    color: '#fff',
+    fontWeight: 800,
+    fontSize: '18px',
+  };
 
   return (
     <div style={{
@@ -235,19 +276,16 @@ const VibingDropMarkerContent = ({ drop, isSelected }: { drop: VibingDrop; isSel
       cursor: 'pointer',
       flexShrink: 0,
     }}>
-      <img
-        src={drop.userAvatar || ''}
-        alt={drop.username}
-        style={{
-          width: '100%',
-          height: '100%',
-          borderRadius: '50%',
-          objectFit: 'cover',
-          border: '2px solid white',
-          display: 'block',
-        }}
-        referrerPolicy="no-referrer"
-      />
+      {drop.userAvatar ? (
+        <img
+          src={drop.userAvatar}
+          alt={drop.username}
+          style={{ ...innerStyle, display: 'block' }}
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <div style={innerStyle}>{initial}</div>
+      )}
     </div>
   );
 };
@@ -400,6 +438,7 @@ function AppInner() {
   const [isConfirming, setIsConfirming] = useState(false);
   const [toastMessage, setToastMessage] = useState<{title: string, message: string, type: 'error' | 'success'} | null>(null);
   const [searchResultMarker, setSearchResultMarker] = useState<{lat: number, lng: number, name: string, address?: string} | null>(null);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
   const [mapViewCenter, setMapViewCenter] = useState({ lat: 22.3193, lng: 114.1694 });
 
@@ -415,6 +454,8 @@ function AppInner() {
         (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
+          setUserLocation({ lat, lng });
+          setMapCenter([lat, lng]);
           if (mapObj) {
             mapObj.panTo({ lat, lng });
             mapObj.setZoom(15);
@@ -575,7 +616,7 @@ function AppInner() {
       await createVibingDrop({
         userId: user.uid,
         username: user.displayName || 'Anonymous',
-        userAvatar: user.photoURL || '',
+        userAvatar: localAvatarUrl || user.photoURL || '',
         text: newDropText.trim(),
         imageUrl,
         mood: newDropMood || undefined,
@@ -934,6 +975,31 @@ function AppInner() {
                 <MapController center={mapCenter} />
                 <MapViewTracker onCenterChange={handleMapViewCenterChange} />
                 
+                {userLocation && (
+                  <MapboxMarker key="user-location" position={{ lat: userLocation.lat, lng: userLocation.lng }} style={{ zIndex: 180 }}>
+                    <div style={{ position: 'relative', width: '48px', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{
+                        position: 'absolute',
+                        width: '48px',
+                        height: '48px',
+                        borderRadius: '50%',
+                        backgroundColor: 'rgba(37, 99, 235, 0.25)',
+                        animation: 'yvibe-locate-pulse 2s ease-out infinite',
+                      }} />
+                      <div style={{
+                        width: '16px',
+                        height: '16px',
+                        borderRadius: '50%',
+                        backgroundColor: '#2563eb',
+                        border: '3px solid white',
+                        boxShadow: '0 2px 10px rgba(37,99,235,0.5)',
+                        position: 'relative',
+                        zIndex: 1,
+                      }} />
+                    </div>
+                  </MapboxMarker>
+                )}
+
                 {searchResultMarker && (
                   <MapboxMarker key="search-marker" position={{ lat: searchResultMarker.lat, lng: searchResultMarker.lng }} style={{ zIndex: 150 }}>
                     <div style={{
@@ -1038,12 +1104,18 @@ function AppInner() {
                 <div className="bg-white rounded-[2rem] shadow-2xl overflow-hidden border border-gray-100">
                   <div className="p-4 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
-                      <img
-                        src={selectedDrop.userAvatar}
-                        alt={selectedDrop.username}
-                        className="w-10 h-10 rounded-full object-cover shrink-0 border border-gray-100"
-                        referrerPolicy="no-referrer"
-                      />
+                      {selectedDrop.userAvatar ? (
+                        <img
+                          src={selectedDrop.userAvatar}
+                          alt={selectedDrop.username}
+                          className="w-10 h-10 rounded-full object-cover shrink-0 border border-gray-100"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full shrink-0 bg-gray-700 text-white flex items-center justify-center font-black text-sm border border-gray-100">
+                          {(selectedDrop.username || '?')[0].toUpperCase()}
+                        </div>
+                      )}
                       <div className="min-w-0">
                         <p className="font-black text-sm truncate">{selectedDrop.username}</p>
                         <p className="text-[9px] text-gray-400 font-bold uppercase tracking-wide">
@@ -1840,7 +1912,7 @@ function AppInner() {
                 initial={{ y: '100%', opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: '100%', opacity: 0 }}
                 className="bg-white w-full h-[85vh] md:max-h-[90vh] rounded-t-[4rem] md:rounded-[3.5rem] shadow-[0_50px_100px_rgba(0,0,0,0.3)] overflow-y-auto scrollbar-hide flex flex-col pointer-events-auto relative mb-24 md:mb-0"
               >
-                <div className="absolute top-6 right-6 flex gap-3 z-[3000]">
+                <div className="absolute top-4 right-4 flex gap-2 z-[3000]">
                   {!isEditingMarker && (
                     <button 
                       type="button"
@@ -1858,27 +1930,27 @@ function AppInner() {
                         setNewMarkerFiles([]);
                         setNewMarkerLinkInput('');
                       }} 
-                      className="w-12 h-12 bg-black rounded-full flex items-center justify-center text-white shadow-2xl hover:bg-gray-800 active:scale-90 transition-all pointer-events-auto"
+                      className="w-10 h-10 md:w-12 md:h-12 bg-black rounded-full flex items-center justify-center text-white shadow-2xl hover:bg-gray-800 active:scale-90 transition-all pointer-events-auto"
                     >
-                      <Pencil className="w-5 h-5" />
+                      <Pencil className="w-4 h-4 md:w-5 md:h-5" />
                     </button>
                   )}
                   {!isEditingMarker && (
                     <button 
                       type="button"
                       onClick={(e) => { e.stopPropagation(); handleDeleteMarker(selectedMarker.id!); }} 
-                      className="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center text-white shadow-2xl hover:bg-red-600 active:scale-90 transition-all pointer-events-auto"
+                      className="w-10 h-10 md:w-12 md:h-12 bg-red-500 rounded-full flex items-center justify-center text-white shadow-2xl hover:bg-red-600 active:scale-90 transition-all pointer-events-auto"
                     >
-                      <Trash2 className="w-5 h-5" />
+                      <Trash2 className="w-4 h-4 md:w-5 md:h-5" />
                     </button>
                   )}
                   {!isEditingMarker && (
                     <button 
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setSelectedMarker(null); setIsEditingMarker(false); }} 
-                      className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-black border-2 border-gray-100 shadow-2xl hover:bg-gray-50 active:scale-90 transition-all pointer-events-auto"
+                      className="w-10 h-10 md:w-12 md:h-12 bg-white rounded-full flex items-center justify-center text-black border-2 border-gray-100 shadow-2xl hover:bg-gray-50 active:scale-90 transition-all pointer-events-auto"
                     >
-                      <X className="w-6 h-6" />
+                      <X className="w-5 h-5 md:w-6 md:h-6" />
                     </button>
                   )}
                 </div>
@@ -2082,23 +2154,20 @@ function AppInner() {
                               )}
                             </div>
                           );
-                        } else {
-                          return (
-                            <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-800 to-black p-6 text-center">
-                              <div className="w-20 h-20 bg-white/10 backdrop-blur-2xl rounded-2xl flex items-center justify-center mb-4 text-white">
-                                <div className="scale-[2.5]">
-                                  {getCategoryIcon(selectedMarker.category)}
-                                </div>
-                              </div>
-                              <h2 className="text-3xl font-black text-white tracking-tighter italic">{selectedMarker.name}</h2>
-                            </div>
-                          );
                         }
+                        return (
+                          <div className="w-full h-full bg-gradient-to-br from-gray-800 to-black" />
+                        );
                       })()}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-60" />
-                      <div className="absolute bottom-6 left-6 text-white">
-                         <h2 className="text-2xl font-black tracking-tighter leading-none mb-1">{selectedMarker.name}</h2>
-                         <p className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-300">{selectedMarker.category}</p>
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/30 pointer-events-none" />
+                      <div className="absolute bottom-5 left-5 right-36 text-white z-10">
+                        {!(selectedMarker.imageUrls?.length || selectedMarker.imageUrl) && (
+                          <div className="w-14 h-14 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center mb-3 text-white">
+                            <div className="scale-[1.8]">{getCategoryIcon(selectedMarker.category)}</div>
+                          </div>
+                        )}
+                        <h2 className="text-xl md:text-2xl font-black tracking-tighter leading-tight mb-1 break-words">{selectedMarker.name}</h2>
+                        <p className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-300">{selectedMarker.category}</p>
                       </div>
                     </div>
 
@@ -2152,7 +2221,7 @@ function AppInner() {
                               className="bg-gray-50 text-gray-600 px-6 py-4 rounded-2xl border border-gray-100 flex items-center gap-2 shrink-0 transition-all hover:bg-gray-100 max-w-[200px]"
                             >
                                <ExternalLink className="w-4 h-4 shrink-0" />
-                               <span className="text-[10px] font-black uppercase tracking-widest truncate" title={link}>Link {idx + 1}</span>
+                               <span className="text-[10px] font-black uppercase tracking-widest truncate" title={link}>{getLinkLabel(link)}</span>
                             </button>
                           ))}
                        </div>
@@ -2211,8 +2280,8 @@ function AppInner() {
 
                     <div className="p-8 lg:p-10 bg-white border-t border-gray-50 flex gap-4 shrink-0 sm:pb-32 lg:pb-10">
                       {(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : [])).length > 0 && (
-                         <a href={(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : []))[0]} target="_blank" className="flex-1 bg-black text-white py-5 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all text-[10px] tracking-widest uppercase text-center">
-                            Visit {(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : [])).length > 1 ? `(1/${(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : [])).length})` : ''} <ExternalLink className="w-4 h-4" />
+                         <a href={(selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : []))[0]} target="_blank" rel="noreferrer" className="flex-1 bg-black text-white py-5 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all text-[10px] tracking-widest uppercase text-center">
+                            {getLinkLabel((selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : []))[0])} <ExternalLink className="w-4 h-4" />
                          </a>
                       )}
                       <button onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedMarker.lat},${selectedMarker.lng}`)} className="flex-1 bg-gray-50 text-black py-5 rounded-2xl font-black shadow-sm active:scale-95 transition-all text-[10px] tracking-widest uppercase">Directions</button>
