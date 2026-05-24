@@ -50,7 +50,8 @@ import {
   Moon,
   Sun,
   Compass,
-  Zap
+  Zap,
+  Share2
 } from 'lucide-react';
 import { Group, Marker as LociMarker, Review, VibingDrop } from './types';
 import { createVibingDrop, deleteVibingDrop, subscribeToActiveDrops, runExpiredDropCleanup } from './services/vibingDrops';
@@ -424,6 +425,7 @@ function AppInner() {
   };
 
   const [isAddingMarker, setIsAddingMarker] = useState<{lat: number, lng: number} | null>(null);
+  const [markerSyncGroupIds, setMarkerSyncGroupIds] = useState<string[]>([]);
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
   const [activeSheet, setActiveSheet] = useState<'none' | 'communities' | 'discover' | 'settings'>('none');
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
@@ -778,6 +780,7 @@ function AppInner() {
       lng: selectedMarker.lng,
       tags: newMarkerTags,
       ownerId: selectedMarker.ownerId,
+      ownerName: selectedMarker.ownerName || user.displayName || 'Member',
       createdAt: selectedMarker.createdAt,
       reviewCount: selectedMarker.reviewCount || 1
     };
@@ -827,6 +830,37 @@ function AppInner() {
     setExistingImageUrls([]);
     setNewMarkerLinks([]);
     setNewMarkerLinkInput('');
+    setMarkerSyncGroupIds(selectedGroup?.id ? [selectedGroup.id] : []);
+  };
+
+  const getMarkerCreatorLabel = (marker: LociMarker) => {
+    if (marker.ownerName) return marker.ownerName;
+    if (marker.ownerId === user?.uid) return 'You';
+    return 'Member';
+  };
+
+  const handleShareInviteCode = async (group: Group) => {
+    const shareText = `Join my tribe "${group.name}" on YVIBE!\nInvite code: ${group.inviteCode}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Join YVIBE Tribe', text: shareText });
+        return;
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(group.inviteCode);
+      setToastMessage({ title: 'Copied!', message: `Invite code ${group.inviteCode} copied to clipboard`, type: 'success' });
+    } catch {
+      setToastMessage({ title: 'Share Failed', message: `Invite code: ${group.inviteCode}`, type: 'error' });
+    }
+  };
+
+  const toggleMarkerSyncGroup = (groupId: string) => {
+    setMarkerSyncGroupIds(prev =>
+      prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]
+    );
   };
 
   const uploadFilesToStorage = async (files: File[]): Promise<string[]> => {
@@ -846,6 +880,15 @@ function AppInner() {
     if (!user || !isAddingMarker) return;
     if (!selectedGroup || !selectedGroup.id) {
       setToastMessage({ title: 'No Group Selected', message: 'Please select or create a group first!', type: 'error' });
+      return;
+    }
+
+    const targetGroupIds = groups.length > 1
+      ? markerSyncGroupIds.filter(id => groups.some(g => g.id === id))
+      : [selectedGroup.id];
+
+    if (targetGroupIds.length === 0) {
+      setToastMessage({ title: 'No Tribe Selected', message: 'Select at least one tribe to publish to.', type: 'error' });
       return;
     }
     
@@ -874,19 +917,23 @@ function AppInner() {
       reviewCount: 1,
       tags: newMarkerTags,
       ownerId: user.uid,
+      ownerName: user.displayName || 'Member',
       createdAt: serverTimestamp()
     };
 
     console.log('Attempting to publish marker:', markerData);
 
     try {
-      const markersRef = collection(db, 'groups', selectedGroup.id, 'markers');
-      const docRef = await addDoc(markersRef, markerData);
-      
-      const newMarker: LociMarker = {
-        id: docRef.id,
-        ...markerData
-      };
+      const createdMarkers = await Promise.all(
+        targetGroupIds.map(async (groupId) => {
+          const markersRef = collection(db, 'groups', groupId, 'markers');
+          const docRef = await addDoc(markersRef, markerData);
+          return { id: docRef.id, groupId, ...markerData } as LociMarker & { groupId: string };
+        })
+      );
+
+      const primaryMarker = createdMarkers.find(m => m.groupId === selectedGroup.id) || createdMarkers[0];
+      const { groupId: _, ...newMarker } = primaryMarker;
       
       setIsAddingMarker(null);
       setNewReviewRating(5);
@@ -895,9 +942,11 @@ function AppInner() {
       setNewMarkerLinks([]);
       setNewMarkerLinkInput('');
       setMarkerCategory('other');
+      setMarkerSyncGroupIds([]);
       
       setSelectedMarker(newMarker);
-      setToastMessage({ title: 'Success', message: 'Vibe published successfully!', type: 'success' });
+      const tribeLabel = targetGroupIds.length === 1 ? 'tribe' : `${targetGroupIds.length} tribes`;
+      setToastMessage({ title: 'Success', message: `Vibe published to ${tribeLabel}!`, type: 'success' });
       return;
     } catch (err: any) {
       console.error('Publish Error Detail:', err);
@@ -1308,6 +1357,13 @@ function AppInner() {
                                 <Trash2 className="w-3 h-3" />
                               </button>
                             )}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleShareInviteCode(group); }}
+                              className={`absolute left-1 bottom-1 p-1.5 rounded-full transition-all ${selectedGroup?.id === group.id ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-white text-gray-500 hover:text-black shadow-sm'}`}
+                              title="Share invite code"
+                            >
+                              <Share2 className="w-3 h-3" />
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -1686,7 +1742,7 @@ function AppInner() {
                   
                   <button 
                     type="button" 
-                    onClick={() => setIsAddingMarker(null)}
+                    onClick={() => { setIsAddingMarker(null); setMarkerSyncGroupIds([]); }}
                     className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center bg-white/10 hover:bg-white/20 active:scale-95 text-white rounded-full transition-all"
                   >
                     <X className="w-4 h-4" />
@@ -1889,6 +1945,40 @@ function AppInner() {
                       </div>
                     </div>
                   </div>
+
+                  {groups.length > 1 && (
+                    <div className="space-y-3 px-4 pb-2">
+                      <label className="text-[10px] font-black text-gray-300 uppercase tracking-widest block">Publish to Tribes</label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setMarkerSyncGroupIds(selectedGroup?.id ? [selectedGroup.id] : [])}
+                          className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${markerSyncGroupIds.length === 1 && markerSyncGroupIds[0] === selectedGroup?.id ? 'bg-black text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                        >
+                          Current only
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMarkerSyncGroupIds(groups.map(g => g.id!).filter(Boolean))}
+                          className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${markerSyncGroupIds.length === groups.length ? 'bg-black text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                        >
+                          All tribes
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {groups.map(group => (
+                          <button
+                            key={group.id}
+                            type="button"
+                            onClick={() => group.id && toggleMarkerSyncGroup(group.id)}
+                            className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${group.id && markerSyncGroupIds.includes(group.id) ? 'bg-black text-white' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}
+                          >
+                            {group.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-5 bg-white border-t border-gray-50 flex gap-2 shrink-0">
@@ -2168,6 +2258,10 @@ function AppInner() {
                         )}
                         <h2 className="text-xl md:text-2xl font-black tracking-tighter leading-tight mb-1 break-words">{selectedMarker.name}</h2>
                         <p className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-300">{selectedMarker.category}</p>
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1.5 flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          Added by {getMarkerCreatorLabel(selectedMarker)}
+                        </p>
                       </div>
                     </div>
 

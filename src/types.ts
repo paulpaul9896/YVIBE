@@ -32,6 +32,7 @@ export interface Marker {
   reviewCount?: number;
   tags?: string[];
   ownerId: string;
+  ownerName?: string;
   createdAt: any;
 }
 
