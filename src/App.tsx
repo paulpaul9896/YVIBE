@@ -51,10 +51,19 @@ import {
   Sun,
   Compass,
   Zap,
-  Share2
+  Share2,
+  HardDrive,
+  RefreshCw
 } from 'lucide-react';
 import { Group, Marker as LociMarker, Review, VibingDrop } from './types';
 import { createVibingDrop, deleteVibingDrop, subscribeToActiveDrops, runExpiredDropCleanup } from './services/vibingDrops';
+import {
+  estimateFirebaseUsage,
+  formatBytes,
+  getUsagePercent,
+  SPARK_FIRESTORE_LIMIT_BYTES,
+  type FirebaseUsageEstimate,
+} from './services/firebaseUsage';
 import { APIProvider, Map, AdvancedMarker as MapboxMarker, Pin, useMap, useMapsLibrary } from '@vis.gl/react-google-maps';
 import PlaceAutocomplete from './components/PlaceAutocomplete';
 import MapViewTracker from './components/MapViewTracker';
@@ -443,10 +452,36 @@ function AppInner() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
   const [mapViewCenter, setMapViewCenter] = useState({ lat: 22.3193, lng: 114.1694 });
+  const [firebaseUsage, setFirebaseUsage] = useState<FirebaseUsageEstimate | null>(null);
+  const [isLoadingFirebaseUsage, setIsLoadingFirebaseUsage] = useState(false);
 
   const handleMapViewCenterChange = useCallback((center: { lat: number; lng: number }) => {
     setMapViewCenter(center);
   }, []);
+
+  const refreshFirebaseUsage = useCallback(async () => {
+    if (!user) return;
+    setIsLoadingFirebaseUsage(true);
+    try {
+      const groupIds = groups.map(g => g.id!).filter(Boolean);
+      const estimate = await estimateFirebaseUsage(groupIds, user.uid);
+      setFirebaseUsage(estimate);
+    } catch (err) {
+      console.error('Firebase usage estimate failed:', err);
+      setToastMessage({
+        title: 'Usage Scan Failed',
+        message: 'Could not estimate Firebase storage. Try again later.',
+        type: 'error',
+      });
+    } finally {
+      setIsLoadingFirebaseUsage(false);
+    }
+  }, [user, groups]);
+
+  useEffect(() => {
+    if (activeSheet !== 'settings' || !user) return;
+    refreshFirebaseUsage();
+  }, [activeSheet, user, refreshFirebaseUsage]);
 
   const mapObj = useMap();
 
@@ -1505,7 +1540,99 @@ function AppInner() {
                             </div>
                           </div>
                         </div>
-                        
+
+                        <div className="p-4 bg-gray-50 rounded-2xl space-y-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <HardDrive className="w-4 h-4 text-gray-400 shrink-0" />
+                              <div className="min-w-0">
+                                <p className="text-sm font-black">Firebase Storage</p>
+                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                                  Spark plan · 1 GB limit · estimated
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={refreshFirebaseUsage}
+                              disabled={isLoadingFirebaseUsage}
+                              className="p-2 rounded-xl bg-white text-gray-500 hover:text-black shadow-sm disabled:opacity-50 transition-colors shrink-0"
+                              title="Refresh usage"
+                            >
+                              <RefreshCw className={`w-4 h-4 ${isLoadingFirebaseUsage ? 'animate-spin' : ''}`} />
+                            </button>
+                          </div>
+
+                          {isLoadingFirebaseUsage && !firebaseUsage ? (
+                            <div className="space-y-2">
+                              <div className="h-3 bg-gray-200 rounded-full animate-pulse" />
+                              <p className="text-[10px] text-gray-400 text-center">Scanning Firestore...</p>
+                            </div>
+                          ) : firebaseUsage ? (
+                            <>
+                              {(() => {
+                                const percent = getUsagePercent(firebaseUsage.totalBytes);
+                                const barColor =
+                                  percent >= 90 ? 'bg-red-500' :
+                                  percent >= 70 ? 'bg-amber-500' :
+                                  'bg-emerald-500';
+                                return (
+                                  <>
+                                    <div className="space-y-2">
+                                      <div className="flex items-end justify-between gap-3">
+                                        <p className="text-lg font-black tabular-nums">
+                                          {formatBytes(firebaseUsage.totalBytes)}
+                                          <span className="text-sm font-bold text-gray-400 ml-1">
+                                            / {formatBytes(SPARK_FIRESTORE_LIMIT_BYTES)}
+                                          </span>
+                                        </p>
+                                        <p className={`text-[10px] font-black uppercase tracking-widest ${percent >= 90 ? 'text-red-500' : percent >= 70 ? 'text-amber-500' : 'text-emerald-600'}`}>
+                                          {percent.toFixed(1)}%
+                                        </p>
+                                      </div>
+                                      <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                                        <div
+                                          className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                                          style={{ width: `${Math.max(percent, percent > 0 ? 2 : 0)}%` }}
+                                        />
+                                      </div>
+                                      {percent >= 90 && (
+                                        <p className="text-[10px] font-bold text-red-500">
+                                          Near Spark plan limit — consider deleting old drops or marker photos.
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2 pt-1">
+                                      {[
+                                        { label: 'Vibing Drops', value: firebaseUsage.breakdown.drops },
+                                        { label: 'Markers', value: firebaseUsage.breakdown.markers },
+                                        { label: 'Reviews', value: firebaseUsage.breakdown.reviews },
+                                        { label: 'Tribes', value: firebaseUsage.breakdown.groups + firebaseUsage.breakdown.members },
+                                        { label: 'Images (est.)', value: firebaseUsage.breakdown.images },
+                                        { label: 'Documents', value: firebaseUsage.documentCount, isCount: true },
+                                      ].map(item => (
+                                        <div key={item.label} className="bg-white rounded-xl px-3 py-2 border border-gray-100">
+                                          <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">{item.label}</p>
+                                          <p className="text-xs font-black tabular-nums">
+                                            {'isCount' in item && item.isCount ? item.value : formatBytes(item.value as number)}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+
+                                    <p className="text-[8px] text-gray-400 leading-relaxed">
+                                      Estimate based on readable Firestore data (includes all Vibing Drops). Actual usage may differ — check Firebase Console for exact numbers.
+                                    </p>
+                                  </>
+                                );
+                              })()}
+                            </>
+                          ) : (
+                            <p className="text-[10px] text-gray-400 text-center">Tap refresh to scan storage.</p>
+                          )}
+                        </div>
+
                         <div className="space-y-2 pt-4">
                           {/* Logout Button */}
                           <button onClick={() => { setActiveSheet('none'); signOut(auth); }} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors border border-transparent text-red-500 hover:text-red-600">

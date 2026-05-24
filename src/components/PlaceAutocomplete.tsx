@@ -13,14 +13,12 @@ type PlaceAutocompleteProps = {
 };
 
 const DEFAULT_BIAS: LocationBias = { lat: 22.3193, lng: 114.1694 }; // Hong Kong
-const BIAS_RADIUS_M = 50_000;
 const BIAS_DEG = 0.35; // ~35km bounding box
 
 function buildAutocompleteOptions(
   maps: typeof google.maps,
   bias: LocationBias,
 ): google.maps.places.AutocompleteOptions {
-  const center = new maps.LatLng(bias.lat, bias.lng);
   const bounds = new maps.LatLngBounds(
     new maps.LatLng(bias.lat - BIAS_DEG, bias.lng - BIAS_DEG),
     new maps.LatLng(bias.lat + BIAS_DEG, bias.lng + BIAS_DEG),
@@ -30,8 +28,6 @@ function buildAutocompleteOptions(
     fields: ['geometry', 'name', 'formatted_address', 'place_id'],
     bounds,
     strictBounds: false,
-    location: center,
-    radius: BIAS_RADIUS_M,
   };
 }
 
