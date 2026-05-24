@@ -238,6 +238,14 @@ const getLinkLabel = (url: string): string => {
   }
 };
 
+const buildGoogleMapsSearchUrl = (marker: { name: string; lat: number; lng: number }) => {
+  const name = marker.name?.trim();
+  const query = name
+    ? `${name}@${marker.lat},${marker.lng}`
+    : `${marker.lat},${marker.lng}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+};
+
 // ── Vibing Drop helpers ────────────────────────────────────────────────────
 const formatTimeLeft = (expiresAt: any): string => {
   if (!expiresAt?.toMillis) return '';
@@ -2428,7 +2436,7 @@ function AppInner() {
 
                        <div className="flex gap-2 mb-10 overflow-x-auto pb-2 scrollbar-hide">
                           <button 
-                            onClick={() => window.open(`https://www.google.com/maps/search/?api=1&query=${selectedMarker.lat},${selectedMarker.lng}`)}
+                            onClick={() => window.open(buildGoogleMapsSearchUrl(selectedMarker), '_blank', 'noopener,noreferrer')}
                             className="bg-blue-50 text-blue-600 px-6 py-4 rounded-2xl border border-blue-100 flex items-center gap-2 shrink-0 transition-all hover:bg-blue-100"
                           >
                              <MapPin className="w-4 h-4" />
