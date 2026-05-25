@@ -1,5 +1,5 @@
 import React, { useEffect, useState, FormEvent, useRef, useCallback } from 'react';
-import { auth, db, storage } from './firebase';
+import { auth, db } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { 
   doc, 
@@ -16,7 +16,6 @@ import {
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { handleFirestoreError, OperationType } from './utils/errorHandling';
 import { motion, AnimatePresence } from 'motion/react';
@@ -212,6 +211,31 @@ const compressImageToBase64 = (file: File, maxWidth = 800, quality = 0.72): Prom
     img.onerror = reject;
     img.src = url;
   });
+
+const MARKER_IMAGE_MAX = 4;
+const MARKER_IMAGE_MAX_WIDTH = 640;
+const MARKER_IMAGE_QUALITY = 0.65;
+/** Firestore doc limit is 1 MiB — leave headroom for other marker fields */
+const MARKER_IMAGES_BUDGET_BYTES = 750_000;
+
+const withTimeout = <T,>(promise: Promise<T>, ms: number, message: string): Promise<T> =>
+  Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+
+const compressMarkerImages = async (files: File[]): Promise<string[]> => {
+  const urls: string[] = [];
+  for (const file of files.slice(0, MARKER_IMAGE_MAX)) {
+    const base64 = await compressImageToBase64(file, MARKER_IMAGE_MAX_WIDTH, MARKER_IMAGE_QUALITY);
+    urls.push(base64);
+  }
+  const totalBytes = urls.reduce((sum, url) => sum + url.length, 0);
+  if (totalBytes > MARKER_IMAGES_BUDGET_BYTES) {
+    throw new Error('Photos are too large. Try fewer or smaller images.');
+  }
+  return urls;
+};
 
 // ── Link label helper ──────────────────────────────────────────────────────
 const LINK_HOST_LABELS: Record<string, string> = {
@@ -804,9 +828,31 @@ function AppInner() {
     
     let uploadedUrls: string[] = [];
     try {
-      uploadedUrls = await uploadFilesToStorage(newMarkerFiles);
-    } catch (err) {
-      setToastMessage({ title: 'Upload Failed', message: 'Failed to upload photos. Please try again.', type: 'error' });
+      if (newMarkerFiles.length > 0) {
+        uploadedUrls = await withTimeout(
+          compressMarkerImages(newMarkerFiles),
+          30_000,
+          'Photo processing timed out. Try smaller images.',
+        );
+      }
+    } catch (err: any) {
+      setToastMessage({
+        title: 'Upload Failed',
+        message: err?.message || 'Failed to process photos. Please try again.',
+        type: 'error',
+      });
+      setIsUploading(false);
+      return;
+    }
+
+    const combinedImageUrls = [...existingImageUrls, ...uploadedUrls];
+    const combinedBytes = combinedImageUrls.reduce((sum, url) => sum + url.length, 0);
+    if (combinedBytes > MARKER_IMAGES_BUDGET_BYTES) {
+      setToastMessage({
+        title: 'Upload Failed',
+        message: 'Photos are too large. Remove some images and try again.',
+        type: 'error',
+      });
       setIsUploading(false);
       return;
     }
@@ -817,7 +863,7 @@ function AppInner() {
       emoji: getCategoryEmoji(markerCategory),
       description: (formData.get('description') as string),
       externalLinks: newMarkerLinks,
-      imageUrls: [...existingImageUrls, ...uploadedUrls],
+      imageUrls: combinedImageUrls,
       rating: Number(newReviewRating),
       lat: selectedMarker.lat,
       lng: selectedMarker.lng,
@@ -906,18 +952,6 @@ function AppInner() {
     );
   };
 
-  const uploadFilesToStorage = async (files: File[]): Promise<string[]> => {
-    const urls: string[] = [];
-    for (const file of files) {
-      if (typeof file === 'string') continue;
-      const fileRef = ref(storage, `markers/${Date.now()}_${file.name}`);
-      const snapshot = await uploadBytesResumable(fileRef, file);
-      const url = await getDownloadURL(snapshot.ref);
-      urls.push(url);
-    }
-    return urls;
-  };
-
   const handleAddMarker = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!user || !isAddingMarker) return;
@@ -940,9 +974,19 @@ function AppInner() {
     
     let uploadedUrls: string[] = [];
     try {
-      uploadedUrls = await uploadFilesToStorage(newMarkerFiles);
-    } catch (err) {
-      setToastMessage({ title: 'Upload Failed', message: 'Failed to upload photos. Please try again.', type: 'error' });
+      if (newMarkerFiles.length > 0) {
+        uploadedUrls = await withTimeout(
+          compressMarkerImages(newMarkerFiles),
+          30_000,
+          'Photo processing timed out. Try smaller images.',
+        );
+      }
+    } catch (err: any) {
+      setToastMessage({
+        title: 'Upload Failed',
+        message: err?.message || 'Failed to process photos. Please try again.',
+        type: 'error',
+      });
       setIsUploading(false);
       return;
     }
@@ -2072,7 +2116,12 @@ function AppInner() {
                              className="hidden" 
                              onChange={(e) => {
                                if (e.target.files) {
-                                 setNewMarkerFiles([...newMarkerFiles, ...Array.from(e.target.files)]);
+                                 const slotsLeft = MARKER_IMAGE_MAX - newMarkerFiles.length;
+                                 if (slotsLeft <= 0) {
+                                   setToastMessage({ title: 'Photo Limit', message: `Maximum ${MARKER_IMAGE_MAX} photos per marker.`, type: 'error' });
+                                   return;
+                                 }
+                                 setNewMarkerFiles([...newMarkerFiles, ...Array.from(e.target.files).slice(0, slotsLeft)]);
                                }
                              }} 
                            />
@@ -2334,7 +2383,12 @@ function AppInner() {
                                  className="hidden" 
                                  onChange={(e) => {
                                    if (e.target.files) {
-                                     setNewMarkerFiles([...newMarkerFiles, ...Array.from(e.target.files)]);
+                                     const slotsLeft = MARKER_IMAGE_MAX - existingImageUrls.length - newMarkerFiles.length;
+                                     if (slotsLeft <= 0) {
+                                       setToastMessage({ title: 'Photo Limit', message: `Maximum ${MARKER_IMAGE_MAX} photos per marker.`, type: 'error' });
+                                       return;
+                                     }
+                                     setNewMarkerFiles([...newMarkerFiles, ...Array.from(e.target.files).slice(0, slotsLeft)]);
                                    }
                                  }} 
                                />
