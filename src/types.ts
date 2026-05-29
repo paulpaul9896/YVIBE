@@ -1,6 +1,7 @@
 export interface User {
   displayName: string;
   createdAt: any;
+  memberGroupIds?: string[];
 }
 
 export interface Group {

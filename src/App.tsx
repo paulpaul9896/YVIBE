@@ -3,6 +3,7 @@ import { auth, db } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { 
   doc, 
+  getDoc,
   getDocFromServer, 
   setDoc, 
   collection, 
@@ -13,6 +14,7 @@ import {
   getDocs,
   deleteDoc,
   updateDoc,
+  arrayUnion,
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore';
@@ -574,18 +576,68 @@ function AppInner() {
     }
   }, [user]);
 
-  // Fetch groups
+  // Fetch owned + joined tribes
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, 'groups'), where('ownerId', '==', user.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const gList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Group));
-      setGroups(gList);
-      if (!selectedGroup && gList.length > 0) setSelectedGroup(gList[0]);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'groups'));
 
-    return () => unsubscribe();
-  }, [user, selectedGroup]);
+    let ownedGroups: Group[] = [];
+    let joinedGroupIds: string[] = [];
+
+    const mergeGroups = async () => {
+      const idSet = new Set<string>();
+      ownedGroups.forEach(g => g.id && idSet.add(g.id));
+      joinedGroupIds.forEach(id => idSet.add(id));
+
+      const merged: Group[] = [];
+      for (const id of idSet) {
+        const owned = ownedGroups.find(g => g.id === id);
+        if (owned) {
+          merged.push(owned);
+          continue;
+        }
+        try {
+          const snap = await getDoc(doc(db, 'groups', id));
+          if (snap.exists()) merged.push({ id: snap.id, ...snap.data() } as Group);
+        } catch {
+          /* skip inaccessible groups */
+        }
+      }
+
+      setGroups(merged);
+      setSelectedGroup(prev => {
+        if (prev && merged.some(g => g.id === prev.id)) return prev;
+        return merged[0] ?? null;
+      });
+    };
+
+    const unsubOwned = onSnapshot(
+      query(collection(db, 'groups'), where('ownerId', '==', user.uid)),
+      (snapshot) => {
+        ownedGroups = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Group));
+        ownedGroups.forEach(g => {
+          if (g.id && g.inviteCode) {
+            setDoc(doc(db, 'group_invites', g.inviteCode.toUpperCase()), { groupId: g.id }, { merge: true }).catch(() => {});
+          }
+        });
+        mergeGroups();
+      },
+      err => handleFirestoreError(err, OperationType.LIST, 'groups'),
+    );
+
+    const unsubUser = onSnapshot(
+      doc(db, 'users', user.uid),
+      (snap) => {
+        joinedGroupIds = (snap.data()?.memberGroupIds as string[] | undefined) ?? [];
+        mergeGroups();
+      },
+      err => handleFirestoreError(err, OperationType.GET, `users/${user.uid}`),
+    );
+
+    return () => {
+      unsubOwned();
+      unsubUser();
+    };
+  }, [user]);
 
   // Fetch markers for selected group
   useEffect(() => {
@@ -729,34 +781,70 @@ function AppInner() {
         inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase()
       };
       const docRef = await addDoc(collection(db, 'groups'), groupData);
+
+      await setDoc(doc(db, 'group_invites', groupData.inviteCode.toUpperCase()), { groupId: docRef.id });
       
       // Auto-add owner as member
       await setDoc(doc(db, 'groups', docRef.id, 'members', user.uid), {
         role: 'owner',
         joinedAt: serverTimestamp()
       });
+
+      setToastMessage({ title: 'Tribe Created', message: `"${name}" is ready to share.`, type: 'success' });
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'groups');
     }
   };
 
-  const handleJoinGroupSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const handleJoinGroupSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!user) return;
     const formData = new FormData(e.currentTarget);
-    const code = formData.get('code') as string;
+    const code = (formData.get('code') as string)?.trim().toUpperCase();
     
     setIsJoiningGroup(false);
+    if (!code) return;
 
-    if (code && user) {
-      getDocs(query(collection(db, 'groups'), where('inviteCode', '==', code.toUpperCase()))).then(res => {
-        if (!res.empty) {
-          const groupId = res.docs[0].id;
-          setDoc(doc(db, 'groups', groupId, 'members', user.uid), {
-            role: 'member',
-            joinedAt: serverTimestamp()
-          });
-        }
-      });
+    try {
+      const inviteSnap = await getDoc(doc(db, 'group_invites', code));
+      if (!inviteSnap.exists()) {
+        setToastMessage({ title: 'Invalid Code', message: 'No tribe found with this invite code.', type: 'error' });
+        return;
+      }
+
+      const groupId = inviteSnap.data().groupId as string;
+      const memberRef = doc(db, 'groups', groupId, 'members', user.uid);
+      const existingMember = await getDoc(memberRef);
+
+      const groupSnap = await getDoc(doc(db, 'groups', groupId));
+      if (!groupSnap.exists()) {
+        setToastMessage({ title: 'Tribe Missing', message: 'This tribe no longer exists.', type: 'error' });
+        return;
+      }
+
+      const joinedGroup = { id: groupSnap.id, ...groupSnap.data() } as Group;
+
+      if (existingMember.exists()) {
+        setGroups(prev => prev.some(g => g.id === joinedGroup.id) ? prev : [...prev, joinedGroup]);
+        setSelectedGroup(joinedGroup);
+        setActiveSheet('none');
+        setToastMessage({ title: 'Already Joined', message: `You are already in "${joinedGroup.name}".`, type: 'success' });
+        return;
+      }
+
+      await setDoc(memberRef, { role: 'member', joinedAt: serverTimestamp() });
+      await updateDoc(doc(db, 'users', user.uid), { memberGroupIds: arrayUnion(groupId) });
+
+      setGroups(prev => prev.some(g => g.id === joinedGroup.id) ? prev : [...prev, joinedGroup]);
+      setSelectedGroup(joinedGroup);
+      setActiveSheet('none');
+      setToastMessage({ title: 'Joined!', message: `Welcome to "${joinedGroup.name}"`, type: 'success' });
+    } catch (err: any) {
+      try {
+        handleFirestoreError(err, OperationType.CREATE, 'groups/members');
+      } catch (e: any) {
+        setToastMessage({ title: 'Join Failed', message: e.message || 'Could not join tribe.', type: 'error' });
+      }
     }
   };
 
@@ -894,6 +982,11 @@ function AppInner() {
       message: 'Are you sure you want to delete this tribe? This action is irreversible.',
       onConfirm: async () => {
         try {
+          const groupSnap = await getDoc(doc(db, 'groups', groupId));
+          const inviteCode = groupSnap.data()?.inviteCode as string | undefined;
+          if (inviteCode) {
+            await deleteDoc(doc(db, 'group_invites', inviteCode.toUpperCase())).catch(() => {});
+          }
           await deleteDoc(doc(db, 'groups', groupId));
           if (selectedGroup?.id === groupId) setSelectedGroup(null);
           setConfirmDialog(null);
@@ -2407,44 +2500,12 @@ function AppInner() {
                   </form>
                 ) : (
                   <>
-                    <div className="h-56 lg:h-64 bg-gray-900 overflow-hidden relative shrink-0">
-                      {(() => {
-                        const displayImages = selectedMarker.imageUrls || (selectedMarker.imageUrl ? [selectedMarker.imageUrl] : []);
-                        if (displayImages.length > 0) {
-                          return (
-                            <div className="flex h-full gap-0.5">
-                              <div className={`h-full relative ${displayImages.length > 1 ? 'w-2/3' : 'w-full'}`}>
-                                <img src={displayImages[0]} alt={selectedMarker.name} className="w-full h-full object-cover opacity-90" />
-                              </div>
-                              {displayImages.length > 1 && (
-                                <div className="flex flex-col gap-0.5 w-1/3">
-                                   <img src={displayImages[1]} alt="" className="w-full h-1/2 object-cover opacity-90" />
-                                   {displayImages.length > 2 && (
-                                     <div className="w-full h-1/2 relative bg-black/20">
-                                       <img src={displayImages[2]} alt="" className="w-full h-full object-cover opacity-90" />
-                                       {displayImages.length > 3 && (
-                                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold text-xl backdrop-blur-[2px]">
-                                           +{displayImages.length - 3}
-                                         </div>
-                                       )}
-                                     </div>
-                                   )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        }
-                        return (
-                          <div className="w-full h-full bg-gradient-to-br from-gray-800 to-black" />
-                        );
-                      })()}
+                    <div className="h-40 lg:h-44 bg-gradient-to-br from-gray-800 to-black overflow-hidden relative shrink-0">
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/30 pointer-events-none" />
                       <div className="absolute bottom-5 left-5 right-36 text-white z-10">
-                        {!(selectedMarker.imageUrls?.length || selectedMarker.imageUrl) && (
-                          <div className="w-14 h-14 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center mb-3 text-white">
-                            <div className="scale-[1.8]">{getCategoryIcon(selectedMarker.category)}</div>
-                          </div>
-                        )}
+                        <div className="w-14 h-14 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center mb-3 text-white">
+                          <div className="scale-[1.8]">{getCategoryIcon(selectedMarker.category)}</div>
+                        </div>
                         <h2 className="text-xl md:text-2xl font-black tracking-tighter leading-tight mb-1 break-words">{selectedMarker.name}</h2>
                         <p className="text-[9px] font-black uppercase tracking-[0.3em] text-gray-300">{selectedMarker.category}</p>
                         <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1.5 flex items-center gap-1">
@@ -2458,6 +2519,26 @@ function AppInner() {
                        <div>
                           <p className="text-gray-400 text-sm font-medium leading-relaxed italic border-l-4 border-gray-100 pl-4">"{selectedMarker.description}"</p>
                        </div>
+
+                       {(() => {
+                         const displayImages = selectedMarker.imageUrls || (selectedMarker.imageUrl ? [selectedMarker.imageUrl] : []);
+                         if (displayImages.length === 0) return null;
+                         return (
+                           <div className="space-y-3">
+                             <p className="text-[10px] font-black text-gray-300 uppercase tracking-[0.2em]">Photos</p>
+                             <div className={`grid gap-2 ${displayImages.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                               {displayImages.map((url, idx) => (
+                                 <img
+                                   key={idx}
+                                   src={url}
+                                   alt={`${selectedMarker.name} photo ${idx + 1}`}
+                                   className={`w-full object-cover rounded-2xl border border-gray-100 ${displayImages.length === 1 ? 'max-h-72' : 'aspect-[4/3]'}`}
+                                 />
+                               ))}
+                             </div>
+                           </div>
+                         );
+                       })()}
                        
                        <div className="grid grid-cols-2 gap-4">
                           {selectedMarker.priceInfo && (

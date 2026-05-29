@@ -32,11 +32,29 @@ service cloud.firestore {
       return data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 100;
     }
 
+    function isValidMemberGroupIdsUpdate(data) {
+      return data.memberGroupIds is list && data.memberGroupIds.size() <= 30;
+    }
+
     match /users/{userId} {
       allow get: if isSignedIn();
       allow list: if isSignedIn() && resource.data.id == request.auth.uid; // Dummy list constraint
       allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUser(incoming());
-      allow update: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && isValidUserUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName']);
+      allow update: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && (
+        (isValidUserUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['displayName'])) ||
+        (isValidMemberGroupIdsUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['memberGroupIds']))
+      );
+    }
+
+    // Invite code → groupId lookup (lets members join without listing all groups)
+    match /group_invites/{code} {
+      allow get: if isSignedIn() && code is string && code.size() > 0 && code.size() <= 20;
+      allow create: if isSignedIn() && code is string && code.size() > 0 && code.size() <= 20
+        && incoming().keys().hasAll(['groupId'])
+        && incoming().groupId is string
+        && get(/databases/$(database)/documents/groups/$(incoming().groupId)).data.ownerId == request.auth.uid;
+      allow delete: if isSignedIn() && code is string
+        && get(/databases/$(database)/documents/groups/$(existing().groupId)).data.ownerId == request.auth.uid;
     }
 
     function isValidGroup(data) {
