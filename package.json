@@ -10,7 +10,10 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "deploy:gh-pages": "npm run build && npx gh-pages -d dist",
-    "deploy:firebase": "firebase deploy"
+    "deploy:firestore:rules": "firebase deploy --only firestore:rules",
+    "deploy:storage:rules": "firebase deploy --only storage",
+    "deploy:rules": "firebase deploy --only firestore:rules,storage",
+    "deploy:firebase": "firebase deploy --only firestore:rules,storage"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -44,6 +47,7 @@
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "eslint": "^10.3.0",
+    "firebase-tools": "^14.27.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
