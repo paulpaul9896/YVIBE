@@ -483,6 +483,7 @@ function AppInner() {
   const [isConfirming, setIsConfirming] = useState(false);
   const [toastMessage, setToastMessage] = useState<{title: string, message: string, type: 'error' | 'success'} | null>(null);
   const [searchResultMarker, setSearchResultMarker] = useState<{lat: number, lng: number, name: string, address?: string} | null>(null);
+  const [prefillMarkerName, setPrefillMarkerName] = useState('');
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number] | null>(null);
   const [mapViewCenter, setMapViewCenter] = useState({ lat: 22.3193, lng: 114.1694 });
@@ -1002,8 +1003,9 @@ function AppInner() {
     });
   };
 
-  const handleMapClick = (lat: number, lng: number) => {
+  const handleMapClick = (lat: number, lng: number, name?: string) => {
     setIsAddingMarker({ lat, lng });
+    setPrefillMarkerName(name?.trim() || '');
     setMarkerCategory('other');
     setCustomCategoryInput('');
     setNewMarkerTags([]);
@@ -1013,6 +1015,24 @@ function AppInner() {
     setNewMarkerLinks([]);
     setNewMarkerLinkInput('');
     setMarkerSyncGroupIds(selectedGroup?.id ? [selectedGroup.id] : []);
+  };
+
+  const handleAddMarkerFromSearch = () => {
+    if (!searchResultMarker) return;
+    if (!selectedGroup?.id) {
+      setToastMessage({ title: 'No Tribe Selected', message: 'Please select or create a tribe first!', type: 'error' });
+      return;
+    }
+    handleMapClick(searchResultMarker.lat, searchResultMarker.lng, searchResultMarker.name);
+    setIsSearchExpanded(false);
+    setSelectedMarker(null);
+    setSelectedDrop(null);
+  };
+
+  const clearSearchResult = () => {
+    setSearchResultMarker(null);
+    setMapCenter(null);
+    setIsSearchExpanded(false);
   };
 
   const getMarkerCreatorLabel = (marker: LociMarker) => {
@@ -1116,6 +1136,7 @@ function AppInner() {
       const { groupId: _, ...newMarker } = primaryMarker;
       
       setIsAddingMarker(null);
+      setPrefillMarkerName('');
       setNewReviewRating(5);
       setIsUploading(false);
       setNewMarkerFiles([]);
@@ -1296,23 +1317,55 @@ function AppInner() {
                 </Map>
               
               <AnimatePresence>
-                {isSearchExpanded && (
+                {(isSearchExpanded || searchResultMarker) && !isAddingMarker && (
                   <motion.div 
                     key="search-expanded-box"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 10 }}
-                    className="fixed bottom-32 right-4 md:right-1/2 md:translate-x-[calc(50%+4rem)] max-w-sm w-[calc(100%-2rem)] md:w-[320px] bg-white/95 backdrop-blur-2xl rounded-[2rem] shadow-[0_16px_40px_rgba(0,0,0,0.2)] border border-black/5 p-4 pointer-events-auto flex items-center gap-4 z-[500]"
+                    className="fixed bottom-32 right-4 md:right-1/2 md:translate-x-[calc(50%+4rem)] max-w-sm w-[calc(100%-2rem)] md:w-[320px] bg-white/95 backdrop-blur-2xl rounded-[2rem] shadow-[0_16px_40px_rgba(0,0,0,0.2)] border border-black/5 p-4 pointer-events-auto z-[500] flex flex-col gap-3"
                   >
-                    <PlaceAutocomplete 
-                      onPlaceSelect={(place) => { handleSelectSuggestion(place); setIsSearchExpanded(false); }} 
-                      onClear={() => { setSearchResultMarker(null); setMapCenter(null); }} 
-                      hasValue={!!searchResultMarker}
-                      locationBias={mapViewCenter}
-                    />
-                    <button onClick={() => setIsSearchExpanded(false)} className="shrink-0 p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 hover:text-black transition-colors">
-                      <X className="w-5 h-5" />
-                    </button>
+                    {isSearchExpanded && (
+                      <div className="flex items-center gap-3 w-full">
+                        <PlaceAutocomplete 
+                          onPlaceSelect={(place) => { handleSelectSuggestion(place); }} 
+                          onClear={clearSearchResult} 
+                          hasValue={!!searchResultMarker}
+                          locationBias={mapViewCenter}
+                        />
+                        <button onClick={() => setIsSearchExpanded(false)} className="shrink-0 p-2 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-500 hover:text-black transition-colors">
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                    )}
+
+                    {searchResultMarker && (
+                      <div className={`w-full space-y-3 ${isSearchExpanded ? 'pt-3 border-t border-gray-100' : ''}`}>
+                        <div className="min-w-0 pr-1">
+                          <p className="text-sm font-black truncate leading-tight">{searchResultMarker.name}</p>
+                          {searchResultMarker.address && (
+                            <p className="text-[10px] font-medium text-gray-400 truncate mt-0.5">{searchResultMarker.address}</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAddMarkerFromSearch}
+                          className="w-full bg-black text-white py-3.5 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 shadow-lg active:scale-[0.98] transition-all"
+                        >
+                          <Plus className="w-4 h-4" />
+                          Add Vibe Here
+                        </button>
+                        {!isSearchExpanded && (
+                          <button
+                            type="button"
+                            onClick={clearSearchResult}
+                            className="w-full py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest hover:text-black transition-colors"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -2014,7 +2067,7 @@ function AppInner() {
                   
                   <button 
                     type="button" 
-                    onClick={() => { setIsAddingMarker(null); setMarkerSyncGroupIds([]); }}
+                    onClick={() => { setIsAddingMarker(null); setPrefillMarkerName(''); setMarkerSyncGroupIds([]); }}
                     className="absolute top-4 right-4 w-10 h-10 flex items-center justify-center bg-white/10 hover:bg-white/20 active:scale-95 text-white rounded-full transition-all"
                   >
                     <X className="w-4 h-4" />
@@ -2024,7 +2077,14 @@ function AppInner() {
                 <div className="p-4 space-y-4 text-black">
                   <div className="space-y-3">
                     <div>
-                      <input name="name" required placeholder="Name of place" className="w-full bg-gray-50 border-none rounded-xl p-3 text-xs font-bold outline-none ring-2 ring-transparent focus:ring-black/5" />
+                      <input
+                        key={prefillMarkerName || 'new-marker'}
+                        name="name"
+                        required
+                        defaultValue={prefillMarkerName}
+                        placeholder="Name of place"
+                        className="w-full bg-gray-50 border-none rounded-xl p-3 text-xs font-bold outline-none ring-2 ring-transparent focus:ring-black/5"
+                      />
                     </div>
 
                     <div className="space-y-3">
