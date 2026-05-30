@@ -76,7 +76,11 @@ service cloud.firestore {
       allow get: if isSignedIn() && isValidId(groupId);
       allow list: if isSignedIn() && (
         resource.data.ownerId == request.auth.uid || 
-        isGroupMember(resource.id, request.auth.uid)
+        isGroupMember(groupId, request.auth.uid) ||
+        (
+          request.query.limit <= 1
+          && resource.data.inviteCode == request.query.whereField('inviteCode').value()
+        )
       );
       allow create: if isSignedIn() && isValidId(groupId) && isValidGroup(incoming()) && incoming().ownerId == request.auth.uid;
       allow update: if isSignedIn() && isValidId(groupId) && isValidGroupUpdate(incoming()) && incoming().ownerId == existing().ownerId && existing().ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'inviteCode']);
@@ -84,9 +88,7 @@ service cloud.firestore {
       
       function isValidGroupMember(data) {
         return data.keys().hasAll(['role', 'joinedAt']) &&
-               data.size() == 2 &&
-               data.role is string && (data.role == 'owner' || data.role == 'member') &&
-               data.joinedAt == request.time;
+               data.role is string && (data.role == 'owner' || data.role == 'member');
       }
       
       match /members/{memberId} {

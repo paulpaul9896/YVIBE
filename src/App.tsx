@@ -15,6 +15,7 @@ import {
   deleteDoc,
   updateDoc,
   arrayUnion,
+  limit,
   serverTimestamp,
   Timestamp
 } from 'firebase/firestore';
@@ -54,7 +55,8 @@ import {
   Zap,
   Share2,
   HardDrive,
-  RefreshCw
+  RefreshCw,
+  Download
 } from 'lucide-react';
 import { Group, Marker as LociMarker, Review, VibingDrop } from './types';
 import { createVibingDrop, deleteVibingDrop, subscribeToActiveDrops, runExpiredDropCleanup } from './services/vibingDrops';
@@ -272,6 +274,17 @@ const buildGoogleMapsSearchUrl = (marker: { name: string; lat: number; lng: numb
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 };
 
+const buildOpenRiceSearchUrl = (placeName: string) =>
+  `https://www.openrice.com/zh/hongkong/restaurants?whatwhere=${encodeURIComponent(placeName.trim())}`;
+
+const buildTabelogSearchUrl = (placeName: string) =>
+  `https://tabelog.com/rst/rstsearch/?vs=1&sk=${encodeURIComponent(placeName.trim())}`;
+
+const getPlaceNameFromForm = (form: HTMLFormElement | null) => {
+  const input = form?.querySelector('input[name="name"]') as HTMLInputElement | null;
+  return input?.value?.trim() || '';
+};
+
 // ── Vibing Drop helpers ────────────────────────────────────────────────────
 const formatTimeLeft = (expiresAt: any): string => {
   if (!expiresAt?.toMillis) return '';
@@ -479,6 +492,7 @@ function AppInner() {
   const [localAvatarUrl, setLocalAvatarUrl] = useState<string | null>(null);
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [isJoiningGroup, setIsJoiningGroup] = useState(false);
+  const [isJoiningGroupSubmitting, setIsJoiningGroupSubmitting] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{message: string, onConfirm: () => Promise<void>} | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [toastMessage, setToastMessage] = useState<{title: string, message: string, type: 'error' | 'success'} | null>(null);
@@ -489,10 +503,44 @@ function AppInner() {
   const [mapViewCenter, setMapViewCenter] = useState({ lat: 22.3193, lng: 114.1694 });
   const [firebaseUsage, setFirebaseUsage] = useState<FirebaseUsageEstimate | null>(null);
   const [isLoadingFirebaseUsage, setIsLoadingFirebaseUsage] = useState(false);
+  const [isExportingTribeBackup, setIsExportingTribeBackup] = useState(false);
 
   const handleMapViewCenterChange = useCallback((center: { lat: number; lng: number }) => {
     setMapViewCenter(center);
   }, []);
+
+  const handleDownloadTribeBackup = async () => {
+    if (!user) return;
+    const groupIds = groups.map(g => g.id!).filter(Boolean);
+    if (groupIds.length === 0) {
+      setToastMessage({
+        title: 'No Tribes',
+        message: 'Create or join a tribe before backing up.',
+        type: 'error',
+      });
+      return;
+    }
+
+    setIsExportingTribeBackup(true);
+    try {
+      const backup = await buildTribesBackup(groupIds, user.uid);
+      const filename = downloadTribeBackupJson(backup);
+      setToastMessage({
+        title: 'Backup Saved',
+        message: `Downloaded ${filename} (${backup.tribeCount} tribes, ${backup.markerCount} markers).`,
+        type: 'success',
+      });
+    } catch (err) {
+      console.error('Tribe backup failed:', err);
+      setToastMessage({
+        title: 'Backup Failed',
+        message: 'Could not export tribes. Try again.',
+        type: 'error',
+      });
+    } finally {
+      setIsExportingTribeBackup(false);
+    }
+  };
 
   const refreshFirebaseUsage = useCallback(async () => {
     if (!user) return;
@@ -797,23 +845,66 @@ function AppInner() {
     }
   };
 
+  const resolveGroupIdByInviteCode = async (code: string): Promise<string | null> => {
+    const normalized = code.trim().toUpperCase();
+    if (!normalized) return null;
+
+    const inviteSnap = await getDoc(doc(db, 'group_invites', normalized));
+    if (inviteSnap.exists()) {
+      return inviteSnap.data().groupId as string;
+    }
+
+    const groupQuery = query(
+      collection(db, 'groups'),
+      where('inviteCode', '==', normalized),
+      limit(1),
+    );
+    const groupRes = await getDocs(groupQuery);
+    if (!groupRes.empty) {
+      return groupRes.docs[0].id;
+    }
+
+    return null;
+  };
+
+  const ensureUserProfile = async () => {
+    if (!user) return;
+    const userRef = doc(db, 'users', user.uid);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) {
+      await setDoc(userRef, {
+        displayName: user.displayName || 'Anonymous',
+        createdAt: serverTimestamp(),
+        memberGroupIds: [],
+      });
+    }
+  };
+
+  const addJoinedGroupToProfile = async (groupId: string) => {
+    if (!user) return;
+    await ensureUserProfile();
+    await updateDoc(doc(db, 'users', user.uid), { memberGroupIds: arrayUnion(groupId) });
+  };
+
   const handleJoinGroupSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || isJoiningGroupSubmitting) return;
     const formData = new FormData(e.currentTarget);
     const code = (formData.get('code') as string)?.trim().toUpperCase();
-    
-    setIsJoiningGroup(false);
     if (!code) return;
 
+    setIsJoiningGroupSubmitting(true);
     try {
-      const inviteSnap = await getDoc(doc(db, 'group_invites', code));
-      if (!inviteSnap.exists()) {
-        setToastMessage({ title: 'Invalid Code', message: 'No tribe found with this invite code.', type: 'error' });
+      const groupId = await resolveGroupIdByInviteCode(code);
+      if (!groupId) {
+        setToastMessage({
+          title: 'Invalid Code',
+          message: 'No tribe found. Ask the owner to open the app once, then try again.',
+          type: 'error',
+        });
         return;
       }
 
-      const groupId = inviteSnap.data().groupId as string;
       const memberRef = doc(db, 'groups', groupId, 'members', user.uid);
       const existingMember = await getDoc(memberRef);
 
@@ -825,27 +916,31 @@ function AppInner() {
 
       const joinedGroup = { id: groupSnap.id, ...groupSnap.data() } as Group;
 
-      if (existingMember.exists()) {
-        setGroups(prev => prev.some(g => g.id === joinedGroup.id) ? prev : [...prev, joinedGroup]);
-        setSelectedGroup(joinedGroup);
-        setActiveSheet('none');
-        setToastMessage({ title: 'Already Joined', message: `You are already in "${joinedGroup.name}".`, type: 'success' });
-        return;
+      if (!existingMember.exists()) {
+        await setDoc(memberRef, { role: 'member', joinedAt: serverTimestamp() });
+        await addJoinedGroupToProfile(groupId);
       }
-
-      await setDoc(memberRef, { role: 'member', joinedAt: serverTimestamp() });
-      await updateDoc(doc(db, 'users', user.uid), { memberGroupIds: arrayUnion(groupId) });
 
       setGroups(prev => prev.some(g => g.id === joinedGroup.id) ? prev : [...prev, joinedGroup]);
       setSelectedGroup(joinedGroup);
       setActiveSheet('none');
-      setToastMessage({ title: 'Joined!', message: `Welcome to "${joinedGroup.name}"`, type: 'success' });
+      setIsJoiningGroup(false);
+      setToastMessage({
+        title: existingMember.exists() ? 'Already Joined' : 'Joined!',
+        message: existingMember.exists()
+          ? `You are already in "${joinedGroup.name}".`
+          : `Welcome to "${joinedGroup.name}"`,
+        type: 'success',
+      });
     } catch (err: any) {
-      try {
-        handleFirestoreError(err, OperationType.CREATE, 'groups/members');
-      } catch (e: any) {
-        setToastMessage({ title: 'Join Failed', message: e.message || 'Could not join tribe.', type: 'error' });
-      }
+      console.error('Join tribe failed:', err);
+      const message =
+        err?.code === 'permission-denied'
+          ? 'Permission denied. Publish the latest firestore.rules in Firebase Console.'
+          : err?.message || 'Could not join tribe.';
+      setToastMessage({ title: 'Join Failed', message, type: 'error' });
+    } finally {
+      setIsJoiningGroupSubmitting(false);
     }
   };
 
@@ -1033,6 +1128,25 @@ function AppInner() {
     setSearchResultMarker(null);
     setMapCenter(null);
     setIsSearchExpanded(false);
+  };
+
+  const addQuickRestaurantLink = (
+    placeName: string,
+    provider: 'openrice' | 'tabelog',
+  ) => {
+    const name = placeName.trim();
+    if (!name) {
+      setToastMessage({ title: 'Name Required', message: 'Enter the place name first.', type: 'error' });
+      return;
+    }
+    const url = provider === 'openrice' ? buildOpenRiceSearchUrl(name) : buildTabelogSearchUrl(name);
+    const label = provider === 'openrice' ? 'OpenRice' : 'Tabelog';
+    if (newMarkerLinks.includes(url)) {
+      setToastMessage({ title: 'Already Added', message: `${label} link is already added.`, type: 'error' });
+      return;
+    }
+    setNewMarkerLinks([...newMarkerLinks, url]);
+    setToastMessage({ title: 'Link Added', message: `${label} search link added.`, type: 'success' });
   };
 
   const getMarkerCreatorLabel = (marker: LociMarker) => {
@@ -1831,6 +1945,39 @@ function AppInner() {
                           )}
                         </div>
 
+                        <div className="p-4 bg-gray-50 rounded-2xl space-y-3">
+                          <div className="flex items-center gap-2">
+                            <Download className="w-4 h-4 text-gray-400 shrink-0" />
+                            <div>
+                              <p className="text-sm font-black">Tribe Backup</p>
+                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+                                Download JSON · all your tribes
+                              </p>
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-gray-500 leading-relaxed">
+                            Exports tribes, markers, reviews and members you can access. Keep this file safe — useful if a tribe is deleted by mistake.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleDownloadTribeBackup}
+                            disabled={isExportingTribeBackup || groups.length === 0}
+                            className="w-full bg-black text-white py-3.5 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.98] transition-all"
+                          >
+                            {isExportingTribeBackup ? (
+                              <>
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                Exporting...
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-4 h-4" />
+                                Download Backup JSON
+                              </>
+                            )}
+                          </button>
+                        </div>
+
                         <div className="space-y-2 pt-4">
                           {/* Logout Button */}
                           <button onClick={() => { setActiveSheet('none'); signOut(auth); }} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 transition-colors border border-transparent text-red-500 hover:text-red-600">
@@ -1984,10 +2131,25 @@ function AppInner() {
                 className="bg-white p-10 rounded-[3rem] shadow-2xl w-full max-w-sm text-center"
               >
                 <h2 className="text-3xl font-black mb-8 italic">Join Tribe</h2>
-                <input name="code" required autoFocus className="w-full bg-gray-50 border-none rounded-2xl p-6 mb-8 text-lg font-bold outline-none ring-offset-4 focus:ring-4 ring-black/5" placeholder="Invite Code..." />
+                <input
+                  name="code"
+                  required
+                  autoFocus
+                  disabled={isJoiningGroupSubmitting}
+                  className="w-full bg-gray-50 border-none rounded-2xl p-6 mb-4 text-lg font-bold outline-none ring-offset-4 focus:ring-4 ring-black/5 uppercase disabled:opacity-50"
+                  placeholder="Invite Code..."
+                />
+                <p className="text-[10px] text-gray-400 mb-6 leading-relaxed">Code is case-insensitive. Tribe owner may need to open the app once so the code is active.</p>
                 <div className="flex gap-4">
-                  <button type="button" onClick={() => setIsJoiningGroup(false)} className="flex-1 py-5 text-sm font-black text-gray-300 hover:text-black uppercase tracking-widest">Cancel</button>
-                  <button type="submit" className="flex-2 bg-black text-white py-5 px-8 rounded-2xl font-black shadow-xl uppercase tracking-widest text-sm">Join</button>
+                  <button type="button" disabled={isJoiningGroupSubmitting} onClick={() => setIsJoiningGroup(false)} className="flex-1 py-5 text-sm font-black text-gray-300 hover:text-black uppercase tracking-widest disabled:opacity-50">Cancel</button>
+                  <button type="submit" disabled={isJoiningGroupSubmitting} className="flex-2 bg-black text-white py-5 px-8 rounded-2xl font-black shadow-xl uppercase tracking-widest text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                    {isJoiningGroupSubmitting ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Joining...
+                      </>
+                    ) : 'Join'}
+                  </button>
                 </div>
               </motion.form>
             </motion.div>
@@ -2209,10 +2371,28 @@ function AppInner() {
 
                   <div className="space-y-4">
                     <div className="space-y-2">
+                       <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Quick Links</p>
+                       <div className="flex flex-wrap gap-2">
+                         <button
+                           type="button"
+                           onClick={(e) => addQuickRestaurantLink(getPlaceNameFromForm(e.currentTarget.closest('form')), 'openrice')}
+                           className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-[#fff8e6] text-[#b8860b] border border-[#f0e0b0] hover:bg-[#fff3cc] active:scale-95 transition-all"
+                         >
+                           + OpenRice
+                         </button>
+                         <button
+                           type="button"
+                           onClick={(e) => addQuickRestaurantLink(getPlaceNameFromForm(e.currentTarget.closest('form')), 'tabelog')}
+                           className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-orange-50 text-orange-700 border border-orange-100 hover:bg-orange-100 active:scale-95 transition-all"
+                         >
+                           + Tabelog
+                         </button>
+                       </div>
+                       <p className="text-[9px] text-gray-400">Uses place name to add a search link — pick the correct shop on OpenRice/Tabelog if needed.</p>
                        {newMarkerLinks.map((link, idx) => (
                          <div key={idx} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-1.5 group">
                            <ExternalLink className="w-3.5 h-3.5 text-gray-300 shrink-0" />
-                           <a href={link} target="_blank" rel="noreferrer" className="flex-1 text-[10px] font-bold text-blue-500 truncate">{link}</a>
+                           <a href={link} target="_blank" rel="noreferrer" className="flex-1 text-[10px] font-bold text-blue-500 truncate">{getLinkLabel(link)}</a>
                            <button type="button" onClick={() => setNewMarkerLinks(newMarkerLinks.filter((_, i) => i !== idx))} className="text-gray-300 hover:text-red-500">
                              <X className="w-3 h-3" />
                            </button>
@@ -2350,6 +2530,7 @@ function AppInner() {
                         setCustomCategoryInput(''); 
                         setNewReviewRating(selectedMarker.rating || 5); 
                         setNewMarkerTags(selectedMarker.tags || []);
+                        setNewMarkerTagInput('');
                         const defaultLinks = selectedMarker.externalLinks || (selectedMarker.externalLink ? [selectedMarker.externalLink] : []);
                         setNewMarkerLinks(defaultLinks);
                         const defaultImages = selectedMarker.imageUrls || (selectedMarker.imageUrl ? [selectedMarker.imageUrl] : []);
@@ -2460,6 +2641,60 @@ function AppInner() {
                             ))}
                           </div>
                         </div>
+
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block">Tags</label>
+                          <div className="flex flex-wrap gap-2">
+                            {newMarkerTags.map((tag, idx) => (
+                              <div key={idx} className="bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+                                {tag}
+                                <button type="button" onClick={() => setNewMarkerTags(newMarkerTags.filter((_, i) => i !== idx))} className="hover:text-red-500">
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <input
+                            value={newMarkerTagInput}
+                            onChange={e => setNewMarkerTagInput(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                if (newMarkerTagInput.trim()) {
+                                  handleAddTagToMarkerAndSaved(newMarkerTagInput.trim());
+                                  setNewMarkerTagInput('');
+                                }
+                              }
+                            }}
+                            placeholder="Add tags and press Enter..."
+                            className="w-full bg-gray-50 border-none rounded-2xl px-5 py-3 text-sm font-bold outline-none ring-2 ring-transparent focus:ring-black/10 transition-all"
+                          />
+                          {savedTags.length > 0 && (
+                            <div className="pt-1">
+                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2 border-t pt-2 mt-2">Frequently Used</p>
+                              <div className="flex flex-wrap gap-2">
+                                {savedTags.map(tag => (
+                                  <div key={tag} className="relative group/tag flex items-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddTagToMarkerAndSaved(tag)}
+                                      className="bg-gray-50 border border-gray-100 text-gray-500 hover:text-black hover:border-gray-200 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1"
+                                    >
+                                      <Plus className="w-3 h-3" /> {tag}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleRemoveSavedTag(e, tag)}
+                                      className="ml-1 w-5 h-5 flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       <div>
@@ -2468,10 +2703,28 @@ function AppInner() {
 
                       <div className="space-y-4">
                         <div className="space-y-2">
+                           <p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">Quick Links</p>
+                           <div className="flex flex-wrap gap-2">
+                             <button
+                               type="button"
+                               onClick={(e) => addQuickRestaurantLink(getPlaceNameFromForm(e.currentTarget.closest('form')), 'openrice')}
+                               className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-[#fff8e6] text-[#b8860b] border border-[#f0e0b0] hover:bg-[#fff3cc] active:scale-95 transition-all"
+                             >
+                               + OpenRice
+                             </button>
+                             <button
+                               type="button"
+                               onClick={(e) => addQuickRestaurantLink(getPlaceNameFromForm(e.currentTarget.closest('form')), 'tabelog')}
+                               className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-orange-50 text-orange-700 border border-orange-100 hover:bg-orange-100 active:scale-95 transition-all"
+                             >
+                               + Tabelog
+                             </button>
+                           </div>
+                           <p className="text-[9px] text-gray-400">Uses place name to add a search link — pick the correct shop on OpenRice/Tabelog if needed.</p>
                            {newMarkerLinks.map((link, idx) => (
                              <div key={idx} className="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-1.5 group">
                                <ExternalLink className="w-3.5 h-3.5 text-gray-300 shrink-0" />
-                               <a href={link} target="_blank" rel="noreferrer" className="flex-1 text-[10px] font-bold text-blue-500 truncate">{link}</a>
+                               <a href={link} target="_blank" rel="noreferrer" className="flex-1 text-[10px] font-bold text-blue-500 truncate">{getLinkLabel(link)}</a>
                                <button type="button" onClick={() => setNewMarkerLinks(newMarkerLinks.filter((_, i) => i !== idx))} className="text-gray-300 hover:text-red-500">
                                  <X className="w-3 h-3" />
                                </button>
